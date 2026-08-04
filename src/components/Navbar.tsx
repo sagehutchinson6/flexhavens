@@ -1,0 +1,481 @@
+import { useState, useEffect } from "react";
+import { Link, useLocation, useNavigate } from "react-router";
+import {
+  ShoppingCart, Menu, X, Home, Building2, Phone, User, Shield, HelpCircle, TrendingUp,
+  ChevronDown, PieChart, LogIn, UserPlus, Calculator, LayoutDashboard, Briefcase, Coins,
+  ArrowDownToLine, ArrowUpFromLine, Receipt, Bell, Settings, LogOut,
+  Landmark, FileText, Wallet, ClipboardList,
+} from "lucide-react";
+import { useCart } from "@/hooks/use-cart";
+import { useInvestor } from "@/hooks/use-investor";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import CartDrawer from "./CartDrawer";
+import InvestorAvatar from "@/components/invest/InvestorAvatar";
+
+type MenuItem = { href: string; label: string; icon: typeof PieChart };
+
+const guestInvestItems: MenuItem[] = [
+  { href: "/invest#invest-plans", label: "Investment Plans", icon: PieChart },
+  { href: "/invest/login", label: "Investor Login", icon: LogIn },
+  { href: "/invest/register", label: "Create Investor Account", icon: UserPlus },
+  { href: "/invest#invest-calculator", label: "Investment Calculator", icon: Calculator },
+  { href: "/invest#invest-faq", label: "Investment FAQ", icon: HelpCircle },
+];
+
+const guestMortgageItems: MenuItem[] = [
+  { href: "/mortgage#info", label: "Mortgage Information", icon: Landmark },
+  { href: "/mortgage#plans", label: "Available Mortgage Plans", icon: ClipboardList },
+  { href: "/mortgage#calculator", label: "Mortgage Calculator", icon: Calculator },
+  { href: "/mortgage#properties", label: "Apply for a Mortgage", icon: FileText },
+  { href: "/mortgage#faq", label: "Mortgage FAQ", icon: HelpCircle },
+];
+
+const authMortgageItems: MenuItem[] = [
+  { href: "/invest/dashboard?tab=mortgages", label: "My Mortgages", icon: Landmark },
+  { href: "/invest/dashboard?tab=mortgages&sub=applications", label: "Mortgage Applications", icon: FileText },
+  { href: "/invest/dashboard?tab=mortgages&sub=history", label: "Payment History", icon: Receipt },
+  { href: "/invest/dashboard?tab=mortgages&sub=history", label: "Mortgage Statements", icon: ClipboardList },
+  { href: "/invest/dashboard?tab=mortgages", label: "Continue Mortgage Payments", icon: Wallet },
+];
+
+const authInvestItems: MenuItem[] = [
+  { href: "/invest/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/invest/dashboard?tab=portfolio", label: "Portfolio", icon: Briefcase },
+  { href: "/invest/dashboard?tab=portfolio", label: "My Investments", icon: TrendingUp },
+  { href: "/invest/dashboard?tab=profits", label: "Profits", icon: Coins },
+  { href: "/invest/dashboard?tab=deposit", label: "Deposit Funds", icon: ArrowDownToLine },
+  { href: "/invest/dashboard?tab=withdraw", label: "Withdraw Funds", icon: ArrowUpFromLine },
+  { href: "/invest/dashboard?tab=transactions", label: "Transactions", icon: Receipt },
+  { href: "/invest/dashboard?tab=notifications", label: "Notifications", icon: Bell },
+  { href: "/invest/dashboard?tab=settings", label: "Settings", icon: Settings },
+];
+
+export default function Navbar() {
+  const [scrolled, setScrolled] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [cartOpen, setCartOpen] = useState(false);
+  const [investOpen, setInvestOpen] = useState(false);
+  const [investMobileOpen, setInvestMobileOpen] = useState(false);
+  const [mortgageOpen, setMortgageOpen] = useState(false);
+  const [mortgageMobileOpen, setMortgageMobileOpen] = useState(false);
+  const { totalItems } = useCart();
+  const { isAuthenticated, investor, logout } = useInvestor();
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  useEffect(() => {
+    const handleScroll = () => setScrolled(window.scrollY > 50);
+    window.addEventListener("scroll", handleScroll);
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  // Close menus whenever the route changes
+  useEffect(() => {
+    setInvestOpen(false);
+    setMobileMenuOpen(false);
+    setInvestMobileOpen(false);
+    setMortgageOpen(false);
+    setMortgageMobileOpen(false);
+  }, [location.pathname, location.search, location.hash]);
+
+  const navLinks = [
+    { href: "/", label: "Home", icon: Home },
+    { href: "/#catalog", label: "Properties", icon: Building2 },
+    { href: "/track-order", label: "Track Purchase", icon: Shield },
+    { href: "/about", label: "About", icon: User },
+    { href: "/faq", label: "FAQ", icon: HelpCircle },
+    { href: "/#contact", label: "Contact", icon: Phone },
+  ];
+
+  const investItems = isAuthenticated ? authInvestItems : guestInvestItems;
+  const mortgageItems = isAuthenticated ? authMortgageItems : guestMortgageItems;
+
+  const scrollToSection = (href: string) => {
+    setMobileMenuOpen(false);
+    setInvestMobileOpen(false);
+    if (href.startsWith("/#")) {
+      const id = href.replace("/#", "");
+      const el = document.getElementById(id);
+      if (el && location.pathname === "/") {
+        el.scrollIntoView({ behavior: "smooth" });
+        return;
+      }
+    }
+    navigate(href);
+  };
+
+  const goToInvestItem = (href: string) => {
+    setInvestOpen(false);
+    setMobileMenuOpen(false);
+    setInvestMobileOpen(false);
+    setMortgageOpen(false);
+    setMortgageMobileOpen(false);
+    const [path, hash] = href.split("#");
+    if (hash && location.pathname === path) {
+      document.getElementById(hash)?.scrollIntoView({ behavior: "smooth" });
+      navigate(href, { replace: true });
+      return;
+    }
+    navigate(href);
+  };
+
+  const handleLogout = () => {
+    setInvestOpen(false);
+    setMobileMenuOpen(false);
+    setInvestMobileOpen(false);
+    logout();
+    navigate("/");
+  };
+
+  const renderNavButton = (link: (typeof navLinks)[number]) => (
+    <button
+      key={link.href}
+      onClick={() => scrollToSection(link.href)}
+      className="text-gray-700 hover:text-[#1e3a5f] font-medium text-sm uppercase tracking-wide relative group"
+    >
+      {link.label}
+      <span className="absolute -bottom-1 left-0 w-0 h-0.5 bg-[#c8956c] transition-all group-hover:w-full" />
+    </button>
+  );
+
+  return (
+    <nav
+      className={`fixed w-full bg-white/95 backdrop-blur-md z-40 transition-all duration-300 ${
+        scrolled ? "shadow-md" : ""
+      }`}
+    >
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex justify-between items-center h-20">
+          {/* Logo */}
+          <Link to="/" className="flex items-center gap-3 group">
+            <div className="w-10 h-10 bg-[#1e3a5f] rounded-lg flex items-center justify-center group-hover:rotate-3 transition relative overflow-hidden">
+              <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+              </svg>
+              <div className="absolute top-0 right-0 w-3 h-3 bg-red-600 rounded-full border-2 border-white"></div>
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-[#1e3a5f] font-serif tracking-tight">FlexHavens</h1>
+              <p className="text-xs text-gray-500 -mt-1 tracking-widest uppercase">Luxury Real Estate</p>
+            </div>
+          </Link>
+
+          {/* Desktop Nav */}
+          <div className="hidden md:flex items-center gap-6 xl:gap-8">
+            {/* Home + Catalog */}
+            {navLinks.slice(0, 2).map((link) => renderNavButton(link))}
+
+            {/* Investment dropdown */}
+            <div
+              className="relative"
+              onMouseEnter={() => setInvestOpen(true)}
+              onMouseLeave={() => setInvestOpen(false)}
+            >
+              <button
+                onClick={() => setInvestOpen((v) => !v)}
+                className="text-gray-700 hover:text-[#1e3a5f] font-medium text-sm uppercase tracking-wide relative group flex items-center gap-1"
+              >
+                Investment
+                <ChevronDown
+                  className={`w-4 h-4 transition-transform duration-200 ${investOpen ? "rotate-180" : ""}`}
+                />
+                <span className="absolute -bottom-1 left-0 w-0 h-0.5 bg-[#c8956c] transition-all group-hover:w-full" />
+              </button>
+
+              <div
+                className={`absolute top-full left-1/2 -translate-x-1/2 pt-4 transition-all duration-200 ${
+                  investOpen
+                    ? "opacity-100 translate-y-0 pointer-events-auto"
+                    : "opacity-0 translate-y-2 pointer-events-none"
+                }`}
+              >
+                <div className="w-72 bg-white rounded-xl shadow-xl border border-gray-100 py-2 overflow-hidden">
+                  {isAuthenticated && investor && (
+                    <div className="px-4 py-2.5 border-b border-gray-100 mb-1 flex items-center gap-3">
+                      <InvestorAvatar name={investor.name} avatar={investor.avatar} size="sm" />
+                      <div className="min-w-0">
+                        <p className="text-[11px] uppercase tracking-wider text-gray-400">Signed in as</p>
+                        <p className="text-sm font-semibold text-[#1e3a5f] truncate">{investor.name}</p>
+                      </div>
+                    </div>
+                  )}
+                  {investItems.map((item) => (
+                    <button
+                      key={item.label}
+                      onClick={() => goToInvestItem(item.href)}
+                      className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-[#faf8f5] hover:text-[#1e3a5f] transition-colors"
+                    >
+                      <item.icon className="w-4 h-4 text-[#c8956c]" />
+                      {item.label}
+                    </button>
+                  ))}
+                  {isAuthenticated && (
+                    <>
+                      <div className="border-t border-gray-100 my-1" />
+                      <button
+                        onClick={handleLogout}
+                        className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 transition-colors"
+                      >
+                        <LogOut className="w-4 h-4" />
+                        Logout
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Mortgage dropdown */}
+            <div
+              className="relative"
+              onMouseEnter={() => setMortgageOpen(true)}
+              onMouseLeave={() => setMortgageOpen(false)}
+            >
+              <button
+                onClick={() => setMortgageOpen((v) => !v)}
+                className="text-gray-700 hover:text-[#1e3a5f] font-medium text-sm uppercase tracking-wide relative group flex items-center gap-1"
+              >
+                Mortgage
+                <ChevronDown
+                  className={`w-4 h-4 transition-transform duration-200 ${mortgageOpen ? "rotate-180" : ""}`}
+                />
+                <span className="absolute -bottom-1 left-0 w-0 h-0.5 bg-[#c8956c] transition-all group-hover:w-full" />
+              </button>
+
+              <div
+                className={`absolute top-full left-1/2 -translate-x-1/2 pt-4 transition-all duration-200 ${
+                  mortgageOpen
+                    ? "opacity-100 translate-y-0 pointer-events-auto"
+                    : "opacity-0 translate-y-2 pointer-events-none"
+                }`}
+              >
+                <div className="w-72 bg-white rounded-xl shadow-xl border border-gray-100 py-2 overflow-hidden">
+                  {isAuthenticated && investor && (
+                    <div className="px-4 py-2.5 border-b border-gray-100 mb-1 flex items-center gap-3">
+                      <InvestorAvatar name={investor.name} avatar={investor.avatar} size="sm" />
+                      <div className="min-w-0">
+                        <p className="text-[11px] uppercase tracking-wider text-gray-400">Signed in as</p>
+                        <p className="text-sm font-semibold text-[#1e3a5f] truncate">{investor.name}</p>
+                      </div>
+                    </div>
+                  )}
+                  {mortgageItems.map((item) => (
+                    <button
+                      key={item.label}
+                      onClick={() => goToInvestItem(item.href)}
+                      className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-[#faf8f5] hover:text-[#1e3a5f] transition-colors"
+                    >
+                      <item.icon className="w-4 h-4 text-[#c8956c]" />
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Remaining links */}
+            {navLinks.slice(2).map((link) => renderNavButton(link))}
+          </div>
+
+          {/* Right side */}
+          <div className="flex items-center gap-3">
+            {/* Investor action buttons (desktop) */}
+            {!isAuthenticated ? (
+              <div className="hidden lg:flex items-center gap-2">
+                <Link
+                  to="/invest/register"
+                  className="px-4 py-2 rounded-lg bg-[#1e3a5f] text-white text-sm font-medium hover:bg-[#2d5a87] transition"
+                >
+                  Create Account
+                </Link>
+              </div>
+            ) : (
+              <div className="hidden lg:flex items-center gap-2">
+                <button
+                  onClick={handleLogout}
+                  className="px-4 py-2 rounded-lg border border-gray-300 text-gray-600 text-sm font-medium hover:border-red-300 hover:text-red-600 transition flex items-center gap-2"
+                >
+                  <LogOut className="w-4 h-4" />
+                  Logout
+                </button>
+              </div>
+            )}
+
+            {/* Cart */}
+            <Sheet open={cartOpen} onOpenChange={setCartOpen}>
+              <SheetTrigger asChild>
+                <button className="relative p-2 text-gray-600 hover:text-[#1e3a5f] transition">
+                  <ShoppingCart className="w-6 h-6" />
+                  {totalItems > 0 && (
+                    <span className="absolute -top-1 -right-1 bg-[#c8956c] text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-medium">
+                      {totalItems}
+                    </span>
+                  )}
+                </button>
+              </SheetTrigger>
+              <SheetContent className="w-full sm:max-w-lg">
+                <SheetHeader>
+                  <SheetTitle>Your Cart</SheetTitle>
+                </SheetHeader>
+                <CartDrawer onClose={() => setCartOpen(false)} />
+              </SheetContent>
+            </Sheet>
+
+            {/* Admin link */}
+            <Link
+              to="/admin"
+              className="hidden md:flex items-center gap-2 bg-[#1e3a5f] text-white px-4 py-2 rounded-lg hover:bg-[#2d5a87] transition text-sm font-medium"
+            >
+              <Shield className="w-4 h-4" />
+              Admin
+            </Link>
+
+            {/* Mobile menu toggle */}
+            <button
+              className="md:hidden text-gray-600"
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            >
+              {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Mobile Menu */}
+      {mobileMenuOpen && (
+        <div className="md:hidden bg-white border-t shadow-lg max-h-[calc(100vh-5rem)] overflow-y-auto">
+          <div className="px-4 py-4 space-y-2">
+            {/* Home + Catalog */}
+            {navLinks.slice(0, 2).map((link) => (
+              <button
+                key={link.href}
+                onClick={() => scrollToSection(link.href)}
+                className="flex items-center gap-3 w-full text-gray-700 hover:text-[#1e3a5f] font-medium py-3 px-4 rounded-lg hover:bg-gray-50 transition"
+              >
+                <link.icon className="w-5 h-5" />
+                {link.label}
+              </button>
+            ))}
+
+            {/* Investment expandable group */}
+            <button
+              onClick={() => setInvestMobileOpen((v) => !v)}
+              className="flex items-center justify-between w-full text-gray-700 hover:text-[#1e3a5f] font-medium py-3 px-4 rounded-lg hover:bg-gray-50 transition"
+            >
+              <span className="flex items-center gap-3">
+                <TrendingUp className="w-5 h-5" />
+                Investment
+              </span>
+              <ChevronDown
+                className={`w-5 h-5 transition-transform duration-200 ${investMobileOpen ? "rotate-180" : ""}`}
+              />
+            </button>
+            <div
+              className={`overflow-hidden transition-all duration-300 ${
+                investMobileOpen ? "max-h-[700px] opacity-100" : "max-h-0 opacity-0"
+              }`}
+            >
+              <div className="ml-4 pl-4 border-l-2 border-[#c8956c]/30 space-y-1">
+                {isAuthenticated && investor && (
+                  <div className="px-4 py-2 flex items-center gap-2.5">
+                    <InvestorAvatar name={investor.name} avatar={investor.avatar} size="xs" />
+                    <p className="text-xs uppercase tracking-wider text-gray-400">
+                      Signed in as <span className="font-semibold text-[#1e3a5f]">{investor.name}</span>
+                    </p>
+                  </div>
+                )}
+                {investItems.map((item) => (
+                  <button
+                    key={item.label}
+                    onClick={() => goToInvestItem(item.href)}
+                    className="flex items-center gap-3 w-full text-gray-600 hover:text-[#1e3a5f] text-sm font-medium py-2.5 px-4 rounded-lg hover:bg-gray-50 transition"
+                  >
+                    <item.icon className="w-4 h-4 text-[#c8956c]" />
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Mortgage expandable group */}
+            <button
+              onClick={() => setMortgageMobileOpen((v) => !v)}
+              className="flex items-center justify-between w-full text-gray-700 hover:text-[#1e3a5f] font-medium py-3 px-4 rounded-lg hover:bg-gray-50 transition"
+            >
+              <span className="flex items-center gap-3">
+                <Landmark className="w-5 h-5" />
+                Mortgage
+              </span>
+              <ChevronDown
+                className={`w-5 h-5 transition-transform duration-200 ${mortgageMobileOpen ? "rotate-180" : ""}`}
+              />
+            </button>
+            <div
+              className={`overflow-hidden transition-all duration-300 ${
+                mortgageMobileOpen ? "max-h-[700px] opacity-100" : "max-h-0 opacity-0"
+              }`}
+            >
+              <div className="ml-4 pl-4 border-l-2 border-[#c8956c]/30 space-y-1">
+                {mortgageItems.map((item) => (
+                  <button
+                    key={item.label}
+                    onClick={() => goToInvestItem(item.href)}
+                    className="flex items-center gap-3 w-full text-gray-600 hover:text-[#1e3a5f] text-sm font-medium py-2.5 px-4 rounded-lg hover:bg-gray-50 transition"
+                  >
+                    <item.icon className="w-4 h-4 text-[#c8956c]" />
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Remaining links */}
+            {navLinks.slice(2).map((link) => (
+              <button
+                key={link.href}
+                onClick={() => scrollToSection(link.href)}
+                className="flex items-center gap-3 w-full text-gray-700 hover:text-[#1e3a5f] font-medium py-3 px-4 rounded-lg hover:bg-gray-50 transition"
+              >
+                <link.icon className="w-5 h-5" />
+                {link.label}
+              </button>
+            ))}
+
+            {/* Investor action buttons */}
+            {!isAuthenticated ? (
+              <div className="pt-2 space-y-2">
+                <Link
+                  to="/invest/register"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="flex items-center justify-center gap-2 w-full bg-[#1e3a5f] text-white font-medium py-3 px-4 rounded-lg hover:bg-[#2d5a87] transition"
+                >
+                  <UserPlus className="w-5 h-5" />
+                  Create Account
+                </Link>
+              </div>
+            ) : (
+              <div className="pt-2 space-y-2">
+                <button
+                  onClick={handleLogout}
+                  className="flex items-center justify-center gap-2 w-full border border-red-200 text-red-600 font-medium py-3 px-4 rounded-lg hover:bg-red-50 transition"
+                >
+                  <LogOut className="w-5 h-5" />
+                  Logout
+                </button>
+              </div>
+            )}
+
+            <Link
+              to="/admin"
+              onClick={() => setMobileMenuOpen(false)}
+              className="flex items-center gap-3 w-full text-white bg-[#1e3a5f] font-medium py-3 px-4 rounded-lg hover:bg-[#2d5a87] transition mt-2"
+            >
+              <Shield className="w-5 h-5" />
+              Admin Portal
+            </Link>
+          </div>
+        </div>
+      )}
+    </nav>
+  );
+}
