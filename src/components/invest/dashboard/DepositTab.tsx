@@ -10,7 +10,7 @@ import { SectionCard, StatusBadge, EmptyState } from "./shared";
 import { VerificationBadgeStrip } from "@/components/invest/VerificationBadge";
 
 const methods = [
-  { id: "bank" as const, label: "Bank Transfer", icon: Building2, note: "Wire / ACH — 1-3 business days" },
+  { id: "bank" as const, label: "Bank Transfer", icon: Building2, note: "Instant review" },
   { id: "card" as const, label: "Debit / Credit Card", icon: CreditCard, note: "Instant review" },
   { id: "paypal" as const, label: "PayPal", icon: Wallet, note: "Instant review" },
   { id: "crypto" as const, label: "Cryptocurrency", icon: Bitcoin, note: "BTC, ETH, USDT" },
@@ -34,8 +34,8 @@ export default function DepositTab({ onDeposited }: { onDeposited: () => void })
   });
 
   const handleDeposit = () => {
-    if (amount < 100) {
-      toast.error("Minimum deposit is ₦100");
+    if (amount < 1000) {
+      toast.error("Minimum deposit is ₦1,000");
       return;
     }
     deposit.mutate({ amount, method });
@@ -52,18 +52,18 @@ export default function DepositTab({ onDeposited }: { onDeposited: () => void })
             <div>
               <Label htmlFor="deposit-amount">Amount (₦)</Label>
               <div className="relative mt-1.5">
-                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold">$</span>
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold">₦</span>
                 <Input
                   id="deposit-amount"
                   type="number"
-                  min={100}
+                  min={1000}
                   value={amountStr}
                   onChange={(e) => setAmountStr(e.target.value)}
                   placeholder="1,000"
                   className="pl-8 h-12 font-bold text-lg"
                 />
               </div>
-              <p className="text-xs text-gray-400 mt-1.5">Minimum ₦100</p>
+              <p className="text-xs text-gray-400 mt-1.5">Minimum ₦1000</p>
             </div>
 
             <div>
