@@ -12,7 +12,7 @@ import { getSessionCookieOptions } from "./lib/cookies";
 import { signInvestorToken } from "./lib/investor-session";
 import { logInvestorActivity, notifyAdmin, logAudit } from "./lib/activity";
 import { checkRateLimit, resetRateLimit } from "./lib/rate-limit";
-import { sendVerificationEmail, sendPasswordResetEmail } from "./lib/email";
+import { isSmtpConfigured, sendVerificationEmail, sendPasswordResetEmail } from "./lib/email";
 import { linkLeadToInvestor } from "./lib/crm";
 
 function generateReferralCode(name: string) {
@@ -147,25 +147,23 @@ export const investorAuthRouter = createRouter({
       });
 
       const verificationToken = await issueToken(investorId, "email_verification");
-      const emailed = await sendVerificationEmail({
-        to: email,
-        name: input.name.trim(),
-        token: verificationToken,
-        reqHeaders: ctx.req.headers,
-      });
-
-      const created = await db.select().from(investors).where(eq(investors.id, investorId)).limit(1);
       await logInvestorActivity(investorId, "register", "Investor account created", ctx.req.headers);
       await logAudit(null, "System", "user_registered", `New user registered: ${input.name.trim()} (${email})`, ctx.req.headers);
       // CRM: link any existing lead to this registered account
       await linkLeadToInvestor(email, investorId, input.name.trim());
-      const jwt = await signInvestorToken({ investorId, email });
-      setInvestorCookie(ctx.resHeaders, ctx.req.headers, jwt);
+
+      // Send verification email asynchronously. Do not block registration if SMTP is slow or fails.
+      sendVerificationEmail({
+        to: email,
+        name: input.name.trim(),
+        token: verificationToken,
+        reqHeaders: ctx.req.headers,
+      }).catch((err) => console.error("verification email failed:", err));
 
       return {
-        investor: sanitizeInvestor(created[0]),
-        // Surfaced only when no SMTP service is configured so the UI can complete the flow
-        devVerificationToken: emailed ? null : verificationToken,
+        success: true,
+        message: "Registration successful. Please verify your email before logging in.",
+        devVerificationToken: isSmtpConfigured() ? null : verificationToken,
       };
     }),
 
@@ -211,6 +209,12 @@ export const investorAuthRouter = createRouter({
       }
       if (investor.status !== "active") {
         throw new TRPCError({ code: "FORBIDDEN", message: "This account has been suspended. Contact support." });
+      }
+      if (investor.emailVerified !== "yes") {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Please verify your email before logging in.",
+        });
       }
 
       resetRateLimit(rlKey);
@@ -268,13 +272,13 @@ export const investorAuthRouter = createRouter({
       return { success: true, devVerificationToken: null };
     }
     const token = await issueToken(ctx.investor.id, "email_verification");
-    const emailed = await sendVerificationEmail({
+    sendVerificationEmail({
       to: ctx.investor.email,
       name: ctx.investor.name,
       token,
       reqHeaders: ctx.req.headers,
-    });
-    return { success: true, devVerificationToken: emailed ? null : token };
+    }).catch((err) => console.error("resend verification email failed:", err));
+    return { success: true, devVerificationToken: isSmtpConfigured() ? null : token };
   }),
 
   forgotPassword: publicQuery
@@ -288,12 +292,12 @@ export const investorAuthRouter = createRouter({
         return { success: true, devResetToken: null };
       }
       const token = await issueToken(rows[0].id, "password_reset");
-      const emailed = await sendPasswordResetEmail({
+      sendPasswordResetEmail({
         to: email,
         name: rows[0].name,
         token,
-      });
-      return { success: true, devResetToken: emailed ? null : token };
+      }).catch((err) => console.error("password reset email failed:", err));
+      return { success: true, devResetToken: isSmtpConfigured() ? null : token };
     }),
 
   resetPassword: publicQuery

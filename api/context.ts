@@ -30,7 +30,7 @@ async function resolveInvestor(headers: Headers): Promise<Investor | undefined> 
     .limit(1);
   const investor = rows.at(0);
   // Deleted/suspended accounts lose access immediately
-  if (!investor || investor.status !== "active") return undefined;
+  if (!investor || investor.status !== "active" || investor.emailVerified !== "yes") return undefined;
   return investor;
 }
 

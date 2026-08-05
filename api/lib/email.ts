@@ -51,6 +51,10 @@ export function appBaseUrl(reqHeaders?: Headers): string {
 // ── SMTP transport ──────────────────────────────────────────────
 let transporterPromise: Promise<Transporter | null> | null = null;
 
+export function isSmtpConfigured(): boolean {
+  return Boolean(process.env.SMTP_HOST);
+}
+
 function getTransporter(): Promise<Transporter | null> {
   if (!transporterPromise) {
     transporterPromise = (async () => {
@@ -65,6 +69,11 @@ function getTransporter(): Promise<Transporter | null> {
         port,
         secure: port === 465,
         auth: user ? { user, pass } : undefined,
+        pool: true,
+        maxConnections: 1,
+        connectionTimeout: Number(process.env.SMTP_CONNECTION_TIMEOUT_MS ?? 10000),
+        greetingTimeout: Number(process.env.SMTP_GREETING_TIMEOUT_MS ?? 10000),
+        socketTimeout: Number(process.env.SMTP_SOCKET_TIMEOUT_MS ?? 15000),
       });
     })();
   }
