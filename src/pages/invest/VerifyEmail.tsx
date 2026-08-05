@@ -72,11 +72,18 @@ export default function VerifyEmail() {
             </div>
             <h3 className="text-lg font-bold text-[#1e3a5f] mb-2">Verification Failed</h3>
             <p className="text-sm text-gray-600 mb-6">{errorMessage}</p>
-            <Link to="/invest/dashboard">
-              <Button variant="outline" className="border-[#1e3a5f] text-[#1e3a5f]">
-                Go to Dashboard
-              </Button>
-            </Link>
+            <div className="flex flex-col gap-3 sm:flex-row sm:justify-center">
+              <Link to="/invest/login">
+                <Button variant="outline" className="border-[#1e3a5f] text-[#1e3a5f]">
+                  Go to Login
+                </Button>
+              </Link>
+              <Link to="/invest/resend-verification">
+                <Button className="bg-gradient-to-r from-[#1e3a5f] to-[#2d5a87]">
+                  Resend Verification Email
+                </Button>
+              </Link>
+            </div>
           </>
         )}
 
@@ -105,14 +112,21 @@ export default function VerifyEmail() {
             </div>
             <h3 className="text-lg font-bold text-[#1e3a5f] mb-2">No Verification Token</h3>
             <p className="text-sm text-gray-600 mb-6">
-              This page expects a verification link from your email. You can request a new one
-              from your dashboard.
+              This page expects a verification link from your email. If you didn't receive it,
+              request a new one below.
             </p>
-            <Link to="/invest/login">
-              <Button variant="outline" className="border-[#1e3a5f] text-[#1e3a5f]">
-                Go to Login
-              </Button>
-            </Link>
+            <div className="flex flex-col gap-3 sm:flex-row sm:justify-center">
+              <Link to="/invest/login">
+                <Button variant="outline" className="border-[#1e3a5f] text-[#1e3a5f]">
+                  Go to Login
+                </Button>
+              </Link>
+              <Link to="/invest/resend-verification">
+                <Button className="bg-gradient-to-r from-[#1e3a5f] to-[#2d5a87]">
+                  Resend Verification Email
+                </Button>
+              </Link>
+            </div>
           </>
         )}
       </div>

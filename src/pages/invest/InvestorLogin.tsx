@@ -115,6 +115,11 @@ export default function InvestorLogin() {
             Create an account
           </Link>
         </p>
+        <p className="text-center text-sm text-gray-600">
+          <Link to="/invest/resend-verification" className="text-[#1e3a5f] hover:text-[#2d5a87] font-semibold">
+            Didn't receive the verification email?
+          </Link>
+        </p>
       </form>
     </InvestAuthShell>
   );
