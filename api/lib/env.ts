@@ -1,5 +1,16 @@
 import "dotenv/config";
 
+// Log limited SMTP/env diagnostics immediately after dotenv loads
+console.log({
+  SMTP_HOST: process.env.SMTP_HOST,
+  SMTP_PORT: process.env.SMTP_PORT,
+  SMTP_USER: process.env.SMTP_USER,
+  SMTP_PASS_EXISTS: !!process.env.SMTP_PASS,
+  SMTP_PASS_LENGTH: process.env.SMTP_PASS?.length,
+  NODE_ENV: process.env.NODE_ENV,
+  ENV_FILE_LOADED: true,
+});
+
 function required(name: string): string {
   const value = process.env[name];
   if (!value && process.env.NODE_ENV === "production") {
