@@ -1,5 +1,7 @@
 // Must stay the first import: sets process TZ to Africa/Lagos for the whole server.
 import "./lib/timezone";
+import dns from "node:dns";
+
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { HttpBindings } from "@hono/node-server";
@@ -11,6 +13,10 @@ import { createOAuthCallbackHandler } from "./kimi/auth";
 import { Paths } from "@contracts/constants";
 import { startRoiScheduler } from "./lib/roi";
 import { startCrmScheduler } from "./lib/crm-scheduler";
+
+// Prefer IPv4 when both IPv4 and IPv6 are available.
+// This avoids IPv6 ENETUNREACH errors in some cloud environments.
+dns.setDefaultResultOrder("ipv4first");
 
 const app = new Hono<{ Bindings: HttpBindings }>();
 

@@ -70,16 +70,6 @@ function getTransporter(): Promise<Transporter | null> {
           "SMTP credentials are not fully configured. Email delivery may fail."
         );
       }
-      console.log("===== SMTP CONFIG =====");
-console.log({
-  host,
-  port,
-  secure: useSecure,
-  user,
-  hasPassword: !!pass,
-  passwordLength: pass?.length,
-});
-console.log("=======================");
       try {
         const transporter = nodemailer.createTransport({
           host,
