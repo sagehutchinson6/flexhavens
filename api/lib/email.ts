@@ -1,4 +1,4 @@
-import type { Transporter } from "nodemailer";
+import { Resend } from "resend";
 
 // ── Brand constants (mirrors the FlexHavens site theme) ─────────
 const Brand = {
@@ -52,63 +52,10 @@ export function appBaseUrl(reqHeaders?: Headers): string {
 let transporterPromise: Promise<Transporter | null> | null = null;
 
 export function isSmtpConfigured(): boolean {
-  return Boolean(process.env.SMTP_HOST);
+  return Boolean(process.env.RESEND_API_KEY);
 }
 
-function getTransporter(): Promise<Transporter | null> {
-  if (!transporterPromise) {
-    transporterPromise = (async () => {
-      const host = process.env.SMTP_HOST;
-      if (!host) return null;
-      const port = Number(process.env.SMTP_PORT ?? 587);
-      const useSecure = port === 465;
-      const user = process.env.SMTP_USER;
-      const pass = process.env.SMTP_PASS;
-      const nodemailer = (await import("nodemailer")).default;
-      if (!user || !pass) {
-        console.warn(
-          "SMTP credentials are not fully configured. Email delivery may fail."
-        );
-      }
-      try {
-        const transporter = nodemailer.createTransport({
-          host,
-          port,
-          secure: useSecure,
-          auth: user ? { user, pass } : undefined,
-          pool: true,
-          maxConnections: 1,
-          connectionTimeout: Number(process.env.SMTP_CONNECTION_TIMEOUT_MS ?? 10000),
-          greetingTimeout: Number(process.env.SMTP_GREETING_TIMEOUT_MS ?? 10000),
-          socketTimeout: Number(process.env.SMTP_SOCKET_TIMEOUT_MS ?? 15000),
-        });
-
-        if (process.env.NODE_ENV !== "production") {
-          try {
-            await transporter.verify();
-            console.log(
-              `SMTP transporter verified: ${host}:${port} secure=${useSecure}`
-            );
-          } catch (verifyError) {
-            console.error(
-              `SMTP verification failed for ${host}:${port} secure=${useSecure}:`,
-              verifyError,
-            );
-          }
-        }
-
-        return transporter;
-      } catch (createError) {
-        console.error(
-          `Failed to create SMTP transporter for ${host}:${port} secure=${useSecure}:`,
-          createError,
-        );
-        return null;
-      }
-    })();
-  }
-  return transporterPromise;
-}
+const resend = new Resend(process.env.RESEND_API_KEY ?? "");
 
 export async function sendEmail(opts: {
   to: string;
@@ -116,34 +63,24 @@ export async function sendEmail(opts: {
   html: string;
   text: string;
 }): Promise<{ sent: boolean; reason?: string }> {
+  if (!process.env.RESEND_API_KEY) {
+    console.error("Resend API key is not configured.");
+    return { sent: false, reason: "resend-not-configured" };
+  }
+
   try {
-    const transporter = await getTransporter();
-    if (!transporter) {
-      return { sent: false, reason: "smtp-not-configured" };
-    }
-    const from = process.env.SMTP_FROM ?? process.env.SMTP_USER ?? Company.email;
-    await transporter.sendMail({
-      from: `"${Company.name}" <${from}>`,
+    const from = process.env.EMAIL_FROM ?? Company.email;
+    await resend.emails.send({
+      from,
       to: opts.to,
       subject: opts.subject,
       html: opts.html,
       text: opts.text,
     });
     return { sent: true };
-  } catch (err) {
-    const smtpHost = process.env.SMTP_HOST ?? "unknown";
-    const smtpPort = process.env.SMTP_PORT ?? "unknown";
-    console.error(
-      "SMTP send failed:",
-      {
-        to: opts.to,
-        host: smtpHost,
-        port: smtpPort,
-        from: process.env.SMTP_FROM ?? process.env.SMTP_USER,
-      },
-      err,
-    );
-    return { sent: false, reason: err instanceof Error ? err.message : "send-failed" };
+  } catch (error: any) {
+    console.error("Resend send failed:", error);
+    return { sent: false, reason: error instanceof Error ? error.message : "send-failed" };
   }
 }
 
