@@ -113,7 +113,7 @@ export default function Navbar() {
     const [path, hash] = href.split("#");
     if (hash && location.pathname === path) {
       document.getElementById(hash)?.scrollIntoView({ behavior: "smooth" });
-      navigate(href, { replace: true });
+      navigate(href);
       return;
     }
     navigate(href);

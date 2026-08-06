@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { Search, CheckCircle, FileText, Scale, KeyRound, Building2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 
 export default function DeliverySection() {
+  const navigate = useNavigate();
   const [orderNumber, setOrderNumber] = useState("");
   const [email, setEmail] = useState("");
 
@@ -14,7 +15,7 @@ export default function DeliverySection() {
       toast.error("Please enter both order number and email");
       return;
     }
-    window.location.href = `/track-order?order=${orderNumber}&email=${email}`;
+    navigate(`/track-order?order=${orderNumber}&email=${email}`);
   };
 
   const steps = [

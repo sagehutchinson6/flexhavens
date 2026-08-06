@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router";
 import { X, CheckCircle2, XCircle, Loader2, AlertTriangle, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -16,6 +17,7 @@ const reasons = [
 ];
 
 export default function DeleteAccountDialog({ onClose }: { onClose: () => void }) {
+  const navigate = useNavigate();
   const { logout } = useInvestor();
   const eligibilityQuery = trpc.investor.deletionEligibility.useQuery(undefined, { retry: false });
   const [step, setStep] = useState<1 | 2 | 3>(1);
@@ -26,7 +28,7 @@ export default function DeleteAccountDialog({ onClose }: { onClose: () => void }
     onSuccess: () => {
       toast.success("Your account has been permanently deleted. We're sorry to see you go.", { duration: 8000 });
       logout();
-      window.location.href = "/";
+      navigate("/", { replace: true });
     },
     onError: (err) => toast.error(err.message),
   });

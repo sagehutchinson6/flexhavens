@@ -236,7 +236,7 @@ export const investorAuthRouter = createRouter({
 
   verifyEmail: publicQuery
     .input(z.object({ token: z.string().min(1) }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = getDb();
       const rows = await db
         .select()
@@ -263,6 +263,18 @@ export const investorAuthRouter = createRouter({
         message: "Your email address has been verified successfully.",
         type: "success",
       });
+
+      const [investor] = await db
+        .select()
+        .from(investors)
+        .where(eq(investors.id, tokenRow.investorId))
+        .limit(1);
+      if (!investor) {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Investor account not found after verification" });
+      }
+
+      const jwt = await signInvestorToken({ investorId: investor.id, email: investor.email });
+      setInvestorCookie(ctx.resHeaders, ctx.req.headers, jwt, false);
 
       return { success: true };
     }),
