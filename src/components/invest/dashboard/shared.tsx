@@ -146,3 +146,59 @@ export function ProgressBar({ value, className }: { value: number; className?: s
     </div>
   );
 }
+
+// ── Wallet & Transaction Summary ────────────────────────────────
+// Shared between the Overview tab and the Wallet tab. Presentation
+// only — all figures come from the existing dashboard stats.
+import { ArrowDownCircle, ArrowUpCircle, ArrowRight } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { formatCurrency } from "@/hooks/use-investor";
+
+export function WalletSummary({
+  stats,
+  setTab,
+}: {
+  stats: any;
+  setTab: (tab: string) => void;
+}) {
+  return (
+    <SectionCard
+      title="Wallet & Transaction Summary"
+      subtitle="Your liquid funds and account totals at a glance"
+      action={
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button size="sm" onClick={() => setTab("deposit")} className="bg-[#1e3a5f] hover:bg-[#2d5a87] text-white">
+            <ArrowDownCircle className="w-4 h-4 mr-1.5" />
+            Deposit
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setTab("withdraw")} className="border-[#1e3a5f] text-[#1e3a5f]">
+            <ArrowUpCircle className="w-4 h-4 mr-1.5" />
+            Withdraw
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setTab("transactions")} className="text-[#c8956c] hover:text-[#b07d52]">
+            View Transactions
+            <ArrowRight className="w-4 h-4 ml-1.5" />
+          </Button>
+        </div>
+      }
+    >
+      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">
+        {[
+          { label: "Wallet Balance", value: formatCurrency(stats?.walletBalance ?? 0), hint: "Liquid funds available" },
+          { label: "Total Deposited", value: formatCurrency(stats?.totalDeposited ?? 0), hint: "All-time deposits" },
+          { label: "Total Withdrawn", value: formatCurrency(stats?.totalWithdrawn ?? 0), hint: `${stats?.withdrawalCount ?? 0} withdrawal${(stats?.withdrawalCount ?? 0) === 1 ? "" : "s"}` },
+          { label: "Investment Funding", value: formatCurrency(stats?.totalInvested ?? 0), hint: "Moved into plans" },
+          { label: "Total ROI Received", value: formatCurrency(stats?.totalMonthlyProfitEarned ?? 0), hint: "Earnings paid to wallet" },
+          { label: "Pending Deposits", value: String(stats?.pendingDepositsCount ?? 0), hint: formatCurrency(stats?.pendingDepositsAmount ?? 0) },
+          { label: "Pending Withdrawals", value: String(stats?.pendingWithdrawalsCount ?? 0), hint: formatCurrency(stats?.pendingWithdrawalsAmount ?? 0) },
+        ].map((item) => (
+          <div key={item.label} className="bg-[#faf8f5] border border-[#c8956c]/15 rounded-xl px-4 py-3.5">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">{item.label}</p>
+            <p className="text-lg font-bold font-serif text-[#1e3a5f] mt-1 truncate">{item.value}</p>
+            <p className="text-[11px] text-gray-400 mt-0.5 truncate">{item.hint}</p>
+          </div>
+        ))}
+      </div>
+    </SectionCard>
+  );
+}

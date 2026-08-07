@@ -45,7 +45,7 @@ const authInvestItems: MenuItem[] = [
   { href: "/invest/dashboard?tab=profits", label: "Profits", icon: Coins },
   { href: "/invest/dashboard?tab=deposit", label: "Deposit Funds", icon: ArrowDownToLine },
   { href: "/invest/dashboard?tab=withdraw", label: "Withdraw Funds", icon: ArrowUpFromLine },
-  { href: "/invest/dashboard?tab=transactions", label: "Transactions", icon: Receipt },
+  { href: "/invest/dashboard?tab=transactions", label: "Wallet Activity", icon: Receipt },
   { href: "/invest/dashboard?tab=notifications", label: "Notifications", icon: Bell },
   { href: "/invest/dashboard?tab=settings", label: "Settings", icon: Settings },
 ];
@@ -58,6 +58,8 @@ export default function Navbar() {
   const [investMobileOpen, setInvestMobileOpen] = useState(false);
   const [mortgageOpen, setMortgageOpen] = useState(false);
   const [mortgageMobileOpen, setMortgageMobileOpen] = useState(false);
+  const [propertiesOpen, setPropertiesOpen] = useState(false);
+  const [propertiesMobileOpen, setPropertiesMobileOpen] = useState(false);
   const { totalItems } = useCart();
   const { isAuthenticated, investor, logout } = useInvestor();
   const navigate = useNavigate();
@@ -76,15 +78,21 @@ export default function Navbar() {
     setInvestMobileOpen(false);
     setMortgageOpen(false);
     setMortgageMobileOpen(false);
+    setPropertiesOpen(false);
+    setPropertiesMobileOpen(false);
   }, [location.pathname, location.search, location.hash]);
 
   const navLinks = [
     { href: "/", label: "Home", icon: Home },
-    { href: "/#catalog", label: "Properties", icon: Building2 },
-    { href: "/track-order", label: "Track Purchase", icon: Shield },
     { href: "/about", label: "About", icon: User },
     { href: "/faq", label: "FAQ", icon: HelpCircle },
     { href: "/#contact", label: "Contact", icon: Phone },
+  ];
+
+  // Properties dropdown — catalog browsing + purchase tracking
+  const propertiesItems: MenuItem[] = [
+    { href: "/#catalog", label: "Check Properties", icon: Building2 },
+    { href: "/track-order", label: "Track Purchase", icon: Shield },
   ];
 
   const investItems = isAuthenticated ? authInvestItems : guestInvestItems;
@@ -93,6 +101,8 @@ export default function Navbar() {
   const scrollToSection = (href: string) => {
     setMobileMenuOpen(false);
     setInvestMobileOpen(false);
+    setPropertiesOpen(false);
+    setPropertiesMobileOpen(false);
     if (href.startsWith("/#")) {
       const id = href.replace("/#", "");
       const el = document.getElementById(id);
@@ -113,7 +123,7 @@ export default function Navbar() {
     const [path, hash] = href.split("#");
     if (hash && location.pathname === path) {
       document.getElementById(hash)?.scrollIntoView({ behavior: "smooth" });
-      navigate(href);
+      navigate(href, { replace: true });
       return;
     }
     navigate(href);
@@ -123,6 +133,8 @@ export default function Navbar() {
     setInvestOpen(false);
     setMobileMenuOpen(false);
     setInvestMobileOpen(false);
+    setPropertiesOpen(false);
+    setPropertiesMobileOpen(false);
     logout();
     navigate("/");
   };
@@ -162,8 +174,47 @@ export default function Navbar() {
 
           {/* Desktop Nav */}
           <div className="hidden md:flex items-center gap-6 xl:gap-8">
-            {/* Home + Catalog */}
-            {navLinks.slice(0, 2).map((link) => renderNavButton(link))}
+            {/* Home */}
+            {navLinks.slice(0, 1).map((link) => renderNavButton(link))}
+
+            {/* Properties dropdown */}
+            <div
+              className="relative"
+              onMouseEnter={() => setPropertiesOpen(true)}
+              onMouseLeave={() => setPropertiesOpen(false)}
+            >
+              <button
+                onClick={() => setPropertiesOpen((v) => !v)}
+                className="text-gray-700 hover:text-[#1e3a5f] font-medium text-sm uppercase tracking-wide relative group flex items-center gap-1"
+              >
+                Properties
+                <ChevronDown
+                  className={`w-4 h-4 transition-transform duration-200 ${propertiesOpen ? "rotate-180" : ""}`}
+                />
+                <span className="absolute -bottom-1 left-0 w-0 h-0.5 bg-[#c8956c] transition-all group-hover:w-full" />
+              </button>
+
+              <div
+                className={`absolute top-full left-1/2 -translate-x-1/2 pt-4 transition-all duration-200 ${
+                  propertiesOpen
+                    ? "opacity-100 translate-y-0 pointer-events-auto"
+                    : "opacity-0 translate-y-2 pointer-events-none"
+                }`}
+              >
+                <div className="w-64 bg-white rounded-xl shadow-xl border border-gray-100 py-2 overflow-hidden">
+                  {propertiesItems.map((item) => (
+                    <button
+                      key={item.label}
+                      onClick={() => scrollToSection(item.href)}
+                      className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-[#faf8f5] hover:text-[#1e3a5f] transition-colors"
+                    >
+                      <item.icon className="w-4 h-4 text-[#c8956c]" />
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
 
             {/* Investment dropdown */}
             <div
@@ -274,7 +325,7 @@ export default function Navbar() {
             </div>
 
             {/* Remaining links */}
-            {navLinks.slice(2).map((link) => renderNavButton(link))}
+            {navLinks.slice(1).map((link) => renderNavButton(link))}
           </div>
 
           {/* Right side */}
@@ -282,6 +333,13 @@ export default function Navbar() {
             {/* Investor action buttons (desktop) */}
             {!isAuthenticated ? (
               <div className="hidden lg:flex items-center gap-2">
+                <Link
+                  to="/invest/login"
+                  className="px-4 py-2 rounded-lg border border-[#1e3a5f] text-[#1e3a5f] text-sm font-medium hover:bg-[#1e3a5f] hover:text-white transition flex items-center gap-2"
+                >
+                  <LogIn className="w-4 h-4" />
+                  Login
+                </Link>
                 <Link
                   to="/invest/register"
                   className="px-4 py-2 rounded-lg bg-[#1e3a5f] text-white text-sm font-medium hover:bg-[#2d5a87] transition"
@@ -345,8 +403,8 @@ export default function Navbar() {
       {mobileMenuOpen && (
         <div className="md:hidden bg-white border-t shadow-lg max-h-[calc(100vh-5rem)] overflow-y-auto">
           <div className="px-4 py-4 space-y-2">
-            {/* Home + Catalog */}
-            {navLinks.slice(0, 2).map((link) => (
+            {/* Home */}
+            {navLinks.slice(0, 1).map((link) => (
               <button
                 key={link.href}
                 onClick={() => scrollToSection(link.href)}
@@ -356,6 +414,38 @@ export default function Navbar() {
                 {link.label}
               </button>
             ))}
+
+            {/* Properties expandable group */}
+            <button
+              onClick={() => setPropertiesMobileOpen((v) => !v)}
+              className="flex items-center justify-between w-full text-gray-700 hover:text-[#1e3a5f] font-medium py-3 px-4 rounded-lg hover:bg-gray-50 transition"
+            >
+              <span className="flex items-center gap-3">
+                <Building2 className="w-5 h-5" />
+                Properties
+              </span>
+              <ChevronDown
+                className={`w-5 h-5 transition-transform duration-200 ${propertiesMobileOpen ? "rotate-180" : ""}`}
+              />
+            </button>
+            <div
+              className={`overflow-hidden transition-all duration-300 ${
+                propertiesMobileOpen ? "max-h-[300px] opacity-100" : "max-h-0 opacity-0"
+              }`}
+            >
+              <div className="ml-4 pl-4 border-l-2 border-[#c8956c]/30 space-y-1">
+                {propertiesItems.map((item) => (
+                  <button
+                    key={item.label}
+                    onClick={() => scrollToSection(item.href)}
+                    className="flex items-center gap-3 w-full text-gray-600 hover:text-[#1e3a5f] text-sm font-medium py-2.5 px-4 rounded-lg hover:bg-gray-50 transition"
+                  >
+                    <item.icon className="w-4 h-4 text-[#c8956c]" />
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
 
             {/* Investment expandable group */}
             <button
@@ -430,7 +520,7 @@ export default function Navbar() {
             </div>
 
             {/* Remaining links */}
-            {navLinks.slice(2).map((link) => (
+            {navLinks.slice(1).map((link) => (
               <button
                 key={link.href}
                 onClick={() => scrollToSection(link.href)}
@@ -444,6 +534,14 @@ export default function Navbar() {
             {/* Investor action buttons */}
             {!isAuthenticated ? (
               <div className="pt-2 space-y-2">
+                <Link
+                  to="/invest/login"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="flex items-center justify-center gap-2 w-full border border-[#1e3a5f] text-[#1e3a5f] font-medium py-3 px-4 rounded-lg hover:bg-[#1e3a5f] hover:text-white transition"
+                >
+                  <LogIn className="w-5 h-5" />
+                  Login
+                </Link>
                 <Link
                   to="/invest/register"
                   onClick={() => setMobileMenuOpen(false)}

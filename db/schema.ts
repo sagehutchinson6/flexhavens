@@ -171,6 +171,7 @@ export const investors = mysqlTable("investors", {
   referralCode: varchar("referralCode", { length: 20 }).notNull().unique(),
   referredById: bigint("referredById", { mode: "number", unsigned: true }),
   emailVerified: mysqlEnum("emailVerified", ["yes", "no"]).default("no").notNull(),
+  pendingEmail: varchar("pendingEmail", { length: 320 }),
   kycStatus: mysqlEnum("kycStatus", ["unverified", "pending", "verified", "rejected"]).default("unverified").notNull(),
   kycDocumentType: varchar("kycDocumentType", { length: 50 }),
   kycIdNumber: varchar("kycIdNumber", { length: 100 }),
@@ -203,6 +204,12 @@ export const investmentPlans = mysqlTable("investmentPlans", {
   minAmount: decimal("minAmount", { precision: 14, scale: 2 }).notNull(),
   targetReturn: int("targetReturn").notNull(), // percent, e.g. 40 = up to 40%
   durationMonths: int("durationMonths").notNull(),
+  // Flexible duration config (days). NULL = legacy fixed duration
+  // (durationMonths × 30). allowedDurationDays = JSON array of specific
+  // day counts; when set, only those options are offered to investors.
+  minDurationDays: int("minDurationDays"),
+  maxDurationDays: int("maxDurationDays"),
+  allowedDurationDays: text("allowedDurationDays"),
   featured: mysqlEnum("featured", ["yes", "no"]).default("no").notNull(),
   description: text("description"),
   features: json("features").notNull(),
@@ -226,6 +233,10 @@ export const investmentProjects = mysqlTable("investmentProjects", {
   raisedAmount: decimal("raisedAmount", { precision: 14, scale: 2 }).default("0.00").notNull(),
   expectedReturn: int("expectedReturn").notNull(), // percent
   durationMonths: int("durationMonths").notNull(),
+  // Optional project-level override of the plan's duration config (days)
+  minDurationDays: int("minDurationDays"),
+  maxDurationDays: int("maxDurationDays"),
+  allowedDurationDays: text("allowedDurationDays"),
   status: mysqlEnum("status", ["open", "funding", "funded", "completed"]).default("open").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
@@ -254,6 +265,9 @@ export const investments = mysqlTable("investments", {
   nextProfitAt: timestamp("nextProfitAt"),
   startDate: timestamp("startDate").defaultNow().notNull(),
   maturityDate: timestamp("maturityDate").notNull(),
+  // Investor-selected duration in days (flexible duration). NULL = legacy
+  // investment whose duration comes from the plan's durationMonths.
+  durationDays: int("durationDays"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt")
     .defaultNow()
@@ -269,7 +283,9 @@ export const deposits = mysqlTable("deposits", {
   id: serial("id").primaryKey(),
   investorId: bigint("investorId", { mode: "number", unsigned: true }).notNull(),
   amount: decimal("amount", { precision: 14, scale: 2 }).notNull(),
-  method: mysqlEnum("method", ["bank", "paypal", "crypto", "card"]).notNull(),
+  // Legacy methods (paypal/card) remain for historical records — new
+  // deposits use bank / opay / crypto only.
+  method: mysqlEnum("method", ["bank", "paypal", "crypto", "card", "opay"]).notNull(),
   status: mysqlEnum("status", ["pending", "approved", "rejected"]).default("pending").notNull(),
   reference: varchar("reference", { length: 100 }).notNull().unique(),
   adminNote: text("adminNote"),
@@ -285,8 +301,11 @@ export const withdrawals = mysqlTable("withdrawals", {
   id: serial("id").primaryKey(),
   investorId: bigint("investorId", { mode: "number", unsigned: true }).notNull(),
   amount: decimal("amount", { precision: 14, scale: 2 }).notNull(),
-  method: mysqlEnum("method", ["bank", "paypal", "crypto"]).notNull(),
+  // Legacy methods (paypal) remain for historical records — new
+  // withdrawals use bank / opay / crypto only.
+  method: mysqlEnum("method", ["bank", "paypal", "crypto", "opay"]).notNull(),
   destination: varchar("destination", { length: 500 }).notNull(),
+  withdrawalAccountId: bigint("withdrawalAccountId", { mode: "number", unsigned: true }),
   status: mysqlEnum("status", ["pending", "approved", "paid", "rejected"]).default("pending").notNull(),
   reference: varchar("reference", { length: 100 }).notNull().unique(),
   adminNote: text("adminNote"),
@@ -296,6 +315,30 @@ export const withdrawals = mysqlTable("withdrawals", {
 
 export type Withdrawal = typeof withdrawals.$inferSelect;
 export type InsertWithdrawal = typeof withdrawals.$inferInsert;
+
+// ── Withdrawal Accounts (saved payout destinations) ─────────────
+export const withdrawalAccounts = mysqlTable("withdrawalAccounts", {
+  id: serial("id").primaryKey(),
+  investorId: bigint("investorId", { mode: "number", unsigned: true }).notNull(),
+  method: mysqlEnum("method", ["bank", "opay", "crypto"]).notNull(),
+  label: varchar("label", { length: 100 }).notNull(),
+  // Bank Transfer fields
+  bankName: varchar("bankName", { length: 150 }),
+  accountName: varchar("accountName", { length: 150 }),
+  accountNumber: varchar("accountNumber", { length: 40 }),
+  // Crypto fields (accountName doubles as an optional note/name)
+  cryptoNetwork: varchar("cryptoNetwork", { length: 80 }),
+  walletAddress: varchar("walletAddress", { length: 255 }),
+  isDefault: mysqlEnum("isDefault", ["yes", "no"]).default("no").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt")
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date()),
+});
+
+export type WithdrawalAccount = typeof withdrawalAccounts.$inferSelect;
+export type InsertWithdrawalAccount = typeof withdrawalAccounts.$inferInsert;
 
 // ── Investment Transactions (ledger) ────────────────────────────
 export const investmentTransactions = mysqlTable("investmentTransactions", {
@@ -344,8 +387,108 @@ export const investorNotifications = mysqlTable("investorNotifications", {
   message: text("message").notNull(),
   type: mysqlEnum("type", ["info", "success", "warning", "error"]).default("info").notNull(),
   isRead: mysqlEnum("isRead", ["yes", "no"]).default("no").notNull(),
+  category: varchar("category", { length: 40 }).default("system").notNull(),
+  notifType: varchar("notifType", { length: 60 }),
+  link: varchar("link", { length: 500 }),
+  relatedRef: varchar("relatedRef", { length: 120 }),
+  archived: mysqlEnum("archived", ["yes", "no"]).default("no").notNull(),
+  deletedAt: timestamp("deletedAt"),
+  emailStatus: mysqlEnum("emailStatus", ["not_applicable", "sent", "failed", "skipped"]).default("not_applicable").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
+
+// ── Notification Preferences (per investor) ─────────────────────
+export const notificationPreferences = mysqlTable("notificationPreferences", {
+  id: serial("id").primaryKey(),
+  investorId: bigint("investorId", { mode: "number", unsigned: true }).notNull().unique(),
+  emailNotifications: mysqlEnum("emailNotifications", ["yes", "no"]).default("yes").notNull(),
+  inAppNotifications: mysqlEnum("inAppNotifications", ["yes", "no"]).default("yes").notNull(),
+  walletUpdates: mysqlEnum("walletUpdates", ["yes", "no"]).default("yes").notNull(),
+  investmentUpdates: mysqlEnum("investmentUpdates", ["yes", "no"]).default("yes").notNull(),
+  propertyUpdates: mysqlEnum("propertyUpdates", ["yes", "no"]).default("yes").notNull(),
+  mortgageUpdates: mysqlEnum("mortgageUpdates", ["yes", "no"]).default("yes").notNull(),
+  meetingReminders: mysqlEnum("meetingReminders", ["yes", "no"]).default("yes").notNull(),
+  documentUpdates: mysqlEnum("documentUpdates", ["yes", "no"]).default("yes").notNull(),
+  referralUpdates: mysqlEnum("referralUpdates", ["yes", "no"]).default("yes").notNull(),
+  marketingEmails: mysqlEnum("marketingEmails", ["yes", "no"]).default("no").notNull(),
+  weeklySummary: mysqlEnum("weeklySummary", ["yes", "no"]).default("no").notNull(),
+  monthlyStatement: mysqlEnum("monthlyStatement", ["yes", "no"]).default("no").notNull(),
+  smsNotifications: mysqlEnum("smsNotifications", ["yes", "no"]).default("no").notNull(), // future-ready
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+
+export type NotificationPreferences = typeof notificationPreferences.$inferSelect;
+
+// ── Email Delivery Log ──────────────────────────────────────────
+export const emailLogs = mysqlTable("emailLogs", {
+  id: serial("id").primaryKey(),
+  investorId: bigint("investorId", { mode: "number", unsigned: true }),
+  notificationId: bigint("notificationId", { mode: "number", unsigned: true }),
+  toEmail: varchar("toEmail", { length: 320 }).notNull(),
+  subject: varchar("subject", { length: 255 }).notNull(),
+  notifType: varchar("notifType", { length: 60 }),
+  status: mysqlEnum("status", ["sent", "failed", "skipped"]).notNull(),
+  error: text("error"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+// ── Admin Broadcasts ────────────────────────────────────────────
+export const broadcasts = mysqlTable("broadcasts", {
+  id: serial("id").primaryKey(),
+  title: varchar("title", { length: 255 }).notNull(),
+  message: text("message").notNull(),
+  kind: mysqlEnum("kind", [
+    "announcement",
+    "maintenance",
+    "emergency",
+    "investment_opportunity",
+    "property_announcement",
+    "feature",
+    "policy",
+    "promotional",
+  ]).default("announcement").notNull(),
+  audience: mysqlEnum("audience", [
+    "all",
+    "investors",
+    "property_buyers",
+    "mortgage_clients",
+    "verified",
+    "custom",
+  ]).default("all").notNull(),
+  customEmails: text("customEmails"),
+  recipientCount: int("recipientCount").default(0).notNull(),
+  emailsSent: int("emailsSent").default(0).notNull(),
+  emailsFailed: int("emailsFailed").default(0).notNull(),
+  sentByName: varchar("sentByName", { length: 255 }).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type Broadcast = typeof broadcasts.$inferSelect;
+
+// ── Sent Scheduled Reminders (dedupe keys) ──────────────────────
+export const sentReminders = mysqlTable("sentReminders", {
+  id: serial("id").primaryKey(),
+  reminderKey: varchar("reminderKey", { length: 180 }).notNull().unique(),
+  investorId: bigint("investorId", { mode: "number", unsigned: true }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+// ── Known Login Devices ─────────────────────────────────────────
+export const investorDevices = mysqlTable(
+  "investorDevices",
+  {
+    id: serial("id").primaryKey(),
+    investorId: bigint("investorId", { mode: "number", unsigned: true }).notNull(),
+    fingerprint: varchar("fingerprint", { length: 64 }).notNull(),
+    label: varchar("label", { length: 255 }).notNull(),
+    ipAddress: varchar("ipAddress", { length: 64 }),
+    firstSeenAt: timestamp("firstSeenAt").defaultNow().notNull(),
+    lastSeenAt: timestamp("lastSeenAt").defaultNow().notNull(),
+  },
+  (t) => [unique("investorDevices_inv_fp_uq").on(t.investorId, t.fingerprint)],
+);
+
+export type InvestorDevice = typeof investorDevices.$inferSelect;
 
 export type InvestorNotification = typeof investorNotifications.$inferSelect;
 export type InsertInvestorNotification = typeof investorNotifications.$inferInsert;
@@ -355,7 +498,8 @@ export const investorTokens = mysqlTable("investorTokens", {
   id: serial("id").primaryKey(),
   investorId: bigint("investorId", { mode: "number", unsigned: true }).notNull(),
   token: varchar("token", { length: 128 }).notNull().unique(),
-  type: mysqlEnum("type", ["email_verification", "password_reset"]).notNull(),
+  type: mysqlEnum("type", ["email_verification", "password_reset", "email_change"]).notNull(),
+  newEmail: varchar("newEmail", { length: 320 }),
   expiresAt: timestamp("expiresAt").notNull(),
   usedAt: timestamp("usedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -935,3 +1079,34 @@ export const testimonials = mysqlTable("testimonials", {
 
 export type Testimonial = typeof testimonials.$inferSelect;
 export type InsertTestimonial = typeof testimonials.$inferInsert;
+
+// ── Team Members (public "Meet Our Team" section) ───────────────
+// Managed from the admin dashboard — the public Team section reads
+// active members ordered by sortOrder. Photos are stored the same way
+// as testimonial photos (data-URL or path string).
+export const teamMembers = mysqlTable("teamMembers", {
+  id: serial("id").primaryKey(),
+  name: varchar("name", { length: 150 }).notNull(),
+  role: varchar("role", { length: 150 }).notNull(),
+  bio: text("bio"),
+  photo: longtext("photo"),
+  sortOrder: int("sortOrder").default(0).notNull(),
+  isActive: mysqlEnum("isActive", ["yes", "no"]).default("yes").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type TeamMember = typeof teamMembers.$inferSelect;
+export type InsertTeamMember = typeof teamMembers.$inferInsert;
+
+// ── Platform Settings (small key/value store) ───────────────────
+// Used for admin-editable content such as deposit payment instructions
+// per payment method (keys: deposit_instructions_bank / _opay / _crypto).
+export const platformSettings = mysqlTable("platformSettings", {
+  key: varchar("key", { length: 100 }).primaryKey(),
+  value: text("value"),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type PlatformSetting = typeof platformSettings.$inferSelect;
+export type InsertPlatformSetting = typeof platformSettings.$inferInsert;

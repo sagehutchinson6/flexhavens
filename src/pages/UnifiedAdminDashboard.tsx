@@ -58,6 +58,7 @@ import MyNotifications from "@/components/invest/admin/crm/MyNotifications";
 import AdminMessages from "@/components/invest/admin/AdminMessages";
 import AdminActivityTimeline from "@/components/invest/admin/AdminActivityTimeline";
 import AdminTestimonials from "@/components/invest/admin/AdminTestimonials";
+import AdminBroadcasts from "@/components/invest/admin/AdminBroadcasts";
 
 type SectionId =
   | "property"
@@ -67,6 +68,7 @@ type SectionId =
   | "messages"
   | "activity"
   | "testimonials"
+  | "broadcasts"
   | "overview"
   | "investments"
   | "liquidations"
@@ -98,6 +100,7 @@ const investTabs: { id: SectionId; label: string; icon: typeof LayoutDashboard }
   { id: "verification", label: "Investor Verification", icon: ShieldCheck },
   { id: "documents", label: "Document Management", icon: FolderOpen },
   { id: "testimonials", label: "Testimonials", icon: Star },
+  { id: "broadcasts", label: "Broadcasts & Email", icon: Megaphone },
   { id: "activity", label: "Activity Timeline", icon: Activity },
   { id: "deposits", label: "Deposits", icon: ArrowDownCircle },
   { id: "withdrawals", label: "Withdrawals", icon: ArrowUpCircle },
@@ -118,9 +121,17 @@ export default function UnifiedAdminDashboard() {
   );
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
+  // Keep the visible section in sync with the URL — this is what makes the
+  // browser/device Back button move between sections correctly.
+  useEffect(() => {
+    const s = (searchParams.get("section") as SectionId) || "property";
+    if (s !== section) setSection(s);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
   useEffect(() => {
     if (!localStorage.getItem("flexhavens-admin")) {
-      navigate("/admin");
+      navigate("/admin", { replace: true });
     }
   }, [navigate]);
 
@@ -131,7 +142,7 @@ export default function UnifiedAdminDashboard() {
   const me = adminMeQuery.data;
   const isPrimary = me?.role === "primary";
   const perms = new Set(me?.permissions ?? []);
-  const canProperty = isPrimary || perms.has("orders") || perms.has("contact");
+  const canProperty = isPrimary || perms.has("orders") || perms.has("contact") || perms.has("catalog") || perms.has("content");
   const canAnnounce = isPrimary || perms.has("announcements");
   const canCrm = isPrimary || perms.has("crm");
   const canAppts = isPrimary || perms.has("appointments");
@@ -141,7 +152,7 @@ export default function UnifiedAdminDashboard() {
   useEffect(() => {
     if (adminMeQuery.isError) {
       localStorage.removeItem("flexhavens-admin");
-      navigate("/admin");
+      navigate("/admin", { replace: true });
     }
   }, [adminMeQuery.isError, navigate]);
 
@@ -199,9 +210,11 @@ export default function UnifiedAdminDashboard() {
   const showBell = isPrimary || canCrm || canAppts;
 
   const handleSetSection = (id: SectionId) => {
-    setSection(id);
-    setSearchParams({ section: id });
     setSidebarOpen(false);
+    if (id === section) return; // no duplicate history entries
+    setSection(id);
+    // Push a real history entry so Back returns to the previous section
+    setSearchParams({ section: id });
   };
 
   const logoutMutation = trpc.admin.logout.useMutation();
@@ -209,7 +222,7 @@ export default function UnifiedAdminDashboard() {
     logoutMutation.mutate(undefined, {
       onSettled: () => {
         localStorage.removeItem("flexhavens-admin");
-        navigate("/admin");
+        navigate("/admin", { replace: true });
       },
     });
   };
@@ -438,6 +451,7 @@ export default function UnifiedAdminDashboard() {
           {section === "verification" && <AdminVerification />}
           {section === "documents" && <AdminDocuments />}
           {section === "testimonials" && <AdminTestimonials />}
+          {section === "broadcasts" && <AdminBroadcasts />}
           {section === "activity" && <AdminActivityTimeline />}
           {section === "deposits" && <AdminDeposits />}
           {section === "withdrawals" && <AdminWithdrawals />}

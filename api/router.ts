@@ -17,6 +17,7 @@ import { appointmentRouter } from "./appointment-router";
 import { messageRouter } from "./message-router";
 import { activityRouter } from "./activity-router";
 import { testimonialRouter } from "./testimonial-router";
+import { notificationRouter } from "./notification-router";
 import { createRouter, publicQuery } from "./middleware";
 
 export const appRouter = createRouter({
@@ -40,6 +41,7 @@ export const appRouter = createRouter({
   message: messageRouter,
   activity: activityRouter,
   testimonial: testimonialRouter,
+  notification: notificationRouter,
 });
 
 export type AppRouter = typeof appRouter;

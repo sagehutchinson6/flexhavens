@@ -113,13 +113,14 @@ export default function AdminInvestments() {
                 <div><p className="text-[11px] text-gray-400">Amount</p><p className="font-bold text-[#1e3a5f]">{formatCurrency(inv.amount)}</p></div>
                 <div><p className="text-[11px] text-gray-400">ROI %</p><p className="font-bold text-[#c8956c]">{inv.effectiveReturn}%{inv.customReturnRate ? " (custom)" : ""}</p></div>
                 <div><p className="text-[11px] text-gray-400">Monthly Profit</p><p className="font-bold text-green-600">{formatCurrency(inv.monthlyProfit)}</p></div>
-                <div><p className="text-[11px] text-gray-400">Profits Paid</p><p className="font-bold text-[#1e3a5f]">{inv.profitsPaid}/{inv.durationMonths}</p></div>
-                <div><p className="text-[11px] text-gray-400">Remaining Payments</p><p className="font-bold text-[#1e3a5f]">{Math.max(inv.durationMonths - inv.profitsPaid, 0)}</p></div>
+                <div><p className="text-[11px] text-gray-400">Profits Paid</p><p className="font-bold text-[#1e3a5f]">{inv.profitsPaid}/{inv.payoutCount ?? inv.durationMonths}</p></div>
+                <div><p className="text-[11px] text-gray-400">Remaining Payments</p><p className="font-bold text-[#1e3a5f]">{Math.max((inv.payoutCount ?? inv.durationMonths) - inv.profitsPaid, 0)}</p></div>
                 <div><p className="text-[11px] text-gray-400">Total ROI Paid</p><p className="font-bold text-green-600">{formatCurrency(inv.totalProfitPaid)}</p></div>
                 <div><p className="text-[11px] text-gray-400">Last ROI Paid</p><p className="font-semibold text-[#1e3a5f]">{inv.lastProfitAt ? formatDate(inv.lastProfitAt) : "—"}</p></div>
                 <div><p className="text-[11px] text-gray-400">Next ROI Due</p><p className="font-semibold text-[#1e3a5f]">{inv.status === "active" && inv.nextProfitAt ? formatDate(inv.nextProfitAt) : "—"}</p></div>
                 <div><p className="text-[11px] text-gray-400">Start Date</p><p className="font-semibold text-[#1e3a5f]">{formatDate(inv.startDate)}</p></div>
                 <div><p className="text-[11px] text-gray-400">End Date</p><p className="font-semibold text-[#1e3a5f]">{formatDate(inv.maturityDate)}</p></div>
+                <div><p className="text-[11px] text-gray-400">Duration</p><p className="font-semibold text-[#1e3a5f]">{inv.durationDaysEffective ?? inv.durationMonths * 30} days{inv.durationDays ? " (flexible)" : ""}</p></div>
               </div>
 
               {inv.status === "active" && (

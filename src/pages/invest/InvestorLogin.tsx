@@ -19,7 +19,7 @@ export default function InvestorLogin() {
   const [remember, setRemember] = useState(true);
 
   useEffect(() => {
-    if (isAuthenticated) navigate("/invest/dashboard");
+    if (isAuthenticated) navigate("/invest/dashboard", { replace: true });
   }, [isAuthenticated, navigate]);
 
   const login = trpc.investorAuth.login.useMutation({
@@ -27,7 +27,8 @@ export default function InvestorLogin() {
       toast.success("Welcome back!");
       refetch();
       const next = searchParams.get("next") || "/invest/dashboard";
-      navigate(next);
+      // Replace the login entry — Back should not return to the login form
+      navigate(next, { replace: true });
     },
     onError: (err) => toast.error(err.message),
   });
@@ -113,11 +114,6 @@ export default function InvestorLogin() {
           New to FlexHavens Invest?{" "}
           <Link to="/invest/register" className="text-[#c8956c] hover:text-[#b07d52] font-semibold">
             Create an account
-          </Link>
-        </p>
-        <p className="text-center text-sm text-gray-600">
-          <Link to="/invest/resend-verification" className="text-[#1e3a5f] hover:text-[#2d5a87] font-semibold">
-            Didn't receive the verification email?
           </Link>
         </p>
       </form>

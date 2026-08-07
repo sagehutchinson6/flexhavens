@@ -6,16 +6,17 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 
 export default function DeliverySection() {
-  const navigate = useNavigate();
   const [orderNumber, setOrderNumber] = useState("");
   const [email, setEmail] = useState("");
+  const navigate = useNavigate();
 
   const handleTrack = () => {
     if (!orderNumber || !email) {
       toast.error("Please enter both order number and email");
       return;
     }
-    navigate(`/track-order?order=${orderNumber}&email=${email}`);
+    // SPA navigation keeps browser history intact (Back returns here)
+    navigate(`/track-order?order=${encodeURIComponent(orderNumber)}&email=${encodeURIComponent(email)}`);
   };
 
   const steps = [

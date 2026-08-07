@@ -11,6 +11,7 @@ import {
 import { notifyAdmin, logAudit } from "./activity";
 import { creditWallet, requireAffected } from "./wallet";
 import { sendSystemMessage } from "./messaging";
+import { notifyUser } from "./notify";
 import { generatePdfDocument } from "./documents";
 import { runMortgageReminders } from "./mortgage";
 
@@ -20,7 +21,117 @@ export function addMonths(date: Date, months: number): Date {
   return d;
 }
 
-// Monthly profit for an investment = principal × (returnRate / durationMonths) %
+export function addDays(date: Date, days: number): Date {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
+/**
+ * Number of monthly ROI payouts for an investment.
+ * Flexible-duration investments (durationDays set) spread the same total
+ * return over ceil(days/30) monthly payouts; legacy investments keep the
+ * plan's durationMonths exactly as before.
+ */
+export function payoutCountFor(
+  inv: { durationDays?: number | null },
+  plan: { durationMonths: number },
+): number {
+  if (inv.durationDays && inv.durationDays > 0) {
+    return Math.max(1, Math.ceil(inv.durationDays / 30));
+  }
+  return plan.durationMonths;
+}
+
+/** Effective duration in days (for display + maturity calculations). */
+export function effectiveDurationDays(
+  inv: { durationDays?: number | null },
+  plan: { durationMonths: number },
+): number {
+  return inv.durationDays && inv.durationDays > 0 ? inv.durationDays : plan.durationMonths * 30;
+}
+
+// ── Flexible duration configuration ─────────────────────────────
+type DurationConfigurable = {
+  minDurationDays?: number | null;
+  maxDurationDays?: number | null;
+  allowedDurationDays?: string | null;
+};
+
+export type DurationConfig = {
+  /** true when the plan/project has no flexible config — legacy fixed term */
+  legacy: boolean;
+  minDays: number;
+  maxDays: number;
+  /** specific allowed day counts; null = any value within min..max */
+  allowedDays: number[] | null;
+};
+
+function parseAllowedDays(raw?: string | null): number[] | null {
+  if (!raw) return null;
+  try {
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr)) {
+      const days = arr
+        .map(Number)
+        .filter((n) => Number.isInteger(n) && n >= 1 && n <= 365);
+      if (days.length) return [...new Set(days)].sort((a, b) => a - b);
+    }
+  } catch {
+    /* fall through */
+  }
+  return null;
+}
+
+/**
+ * Resolve the effective duration rules for an investment.
+ * A project-level configuration (when any field is set) overrides the
+ * plan's configuration. No configuration anywhere = legacy fixed term
+ * (plan.durationMonths × 30 days) and investors don't pick a duration.
+ */
+export function durationConfigFor(
+  plan: { durationMonths: number } & DurationConfigurable,
+  project?: DurationConfigurable | null,
+): DurationConfig {
+  const legacyDays = plan.durationMonths * 30;
+  const projectConfigured =
+    !!project &&
+    (project.minDurationDays != null || project.maxDurationDays != null || !!project.allowedDurationDays);
+  const src: DurationConfigurable = projectConfigured ? project! : plan;
+  const planConfigured =
+    src.minDurationDays != null || src.maxDurationDays != null || !!src.allowedDurationDays;
+
+  if (!planConfigured) {
+    return { legacy: true, minDays: legacyDays, maxDays: legacyDays, allowedDays: null };
+  }
+  const allowed = parseAllowedDays(src.allowedDurationDays);
+  const minDays = src.minDurationDays ?? (allowed ? allowed[0] : 1);
+  const maxDays = src.maxDurationDays ?? (allowed ? allowed[allowed.length - 1] : 365);
+  return {
+    legacy: false,
+    minDays: Math.max(1, Math.min(365, minDays)),
+    maxDays: Math.max(1, Math.min(365, maxDays)),
+    allowedDays: allowed,
+  };
+}
+
+/** Returns an error message when the selected duration violates the config. */
+export function validateDurationDays(cfg: DurationConfig, days: number): string | null {
+  if (!Number.isInteger(days) || days < 1 || days > 365) {
+    return "Duration must be a whole number of days between 1 and 365";
+  }
+  if (cfg.allowedDays && !cfg.allowedDays.includes(days)) {
+    return `Duration must be one of: ${cfg.allowedDays.join(", ")} days`;
+  }
+  if (days < cfg.minDays || days > cfg.maxDays) {
+    return `Duration must be between ${cfg.minDays} and ${cfg.maxDays} days`;
+  }
+  return null;
+}
+
+// Monthly profit for an investment = principal × (returnRate / payoutCount) %
+// (payoutCount = durationMonths for legacy plans, ceil(durationDays/30) for
+// flexible-duration investments)
 export function monthlyProfitFor(
   amount: number,
   returnRate: number,
@@ -75,7 +186,8 @@ export async function runMonthlySettlement(trigger: "scheduler" | "admin" = "sch
 
           const returnRate = fresh.customReturnRate ?? plan.targetReturn;
           const principal = Number(fresh.amount);
-          const { monthlyProfit, monthlyRate } = monthlyProfitFor(principal, returnRate, plan.durationMonths);
+          const payoutCount = payoutCountFor(fresh, plan);
+          const { monthlyProfit, monthlyRate } = monthlyProfitFor(principal, returnRate, payoutCount);
 
           // Month k falls due at startDate + (k-1) months — month 1 is due
           // immediately on activation, so ROI starts in the investment month.
@@ -88,7 +200,7 @@ export async function runMonthlySettlement(trigger: "scheduler" | "admin" = "sch
 
           // Credit every monthly profit that is due — atomically per month.
           // The unique (investmentId, monthNumber) index makes duplicates impossible.
-          while (nextProfit <= now && profitsCount < plan.durationMonths) {
+          while (nextProfit <= now && profitsCount < payoutCount) {
             profitsCount += 1;
             await tx.insert(profitPayments).values({
               investmentId: fresh.id,
@@ -102,7 +214,7 @@ export async function runMonthlySettlement(trigger: "scheduler" | "admin" = "sch
               investorId: fresh.investorId,
               amount: monthlyProfit,
               type: "earning",
-              description: `Monthly ROI profit (month ${profitsCount}/${plan.durationMonths}) — ${fresh.projectName}`,
+              description: `Monthly ROI profit (month ${profitsCount}/${payoutCount}) — ${fresh.projectName}`,
               reference: `PROF-${fresh.id}-M${profitsCount}`,
               counters: { totalEarnings: true },
               skipFrozenCheck: true, // system credit
@@ -206,7 +318,7 @@ export async function runMonthlySettlement(trigger: "scheduler" | "admin" = "sch
                     planName: plan.name,
                     amount: creditedTotal,
                     reference: `PROF-${fresh.id}-M${startCount + 1}${monthsCredited > 1 ? `-M${profitsCount}` : ""}`,
-                    period: monthsCredited === 1 ? `Month ${profitsCount} of ${plan.durationMonths}` : `Months ${startCount + 1}–${profitsCount} of ${plan.durationMonths}`,
+                    period: monthsCredited === 1 ? `Month ${profitsCount} of ${payoutCount}` : `Months ${startCount + 1}–${profitsCount} of ${payoutCount}`,
                     principal,
                     totalPaid,
                   }
@@ -219,7 +331,7 @@ export async function runMonthlySettlement(trigger: "scheduler" | "admin" = "sch
                   reference: `MAT-${fresh.id}`,
                   principal,
                   totalPaid,
-                  durationMonths: plan.durationMonths,
+                  durationDays: effectiveDurationDays(fresh, plan),
                 }
               : null,
           };
@@ -255,6 +367,22 @@ export async function runMonthlySettlement(trigger: "scheduler" | "admin" = "sch
               body: `Your ROI profit of ${fmtMoney(d.amount)} for ${d.projectName} (${d.planName}) has been credited to your wallet. Period: ${d.period}. Total profit to date: ${fmtMoney(d.totalPaid)}. Reference: ${d.reference}.`,
               notify: false,
             });
+            void notifyUser(outcome.investorInfo.id, {
+              type: "roi_paid",
+              category: "investments",
+              title: "Monthly Profit Credited",
+              message: `Your ROI profit of ${fmtMoney(d.amount)} for ${d.projectName} (${d.planName}) has been credited to your wallet.`,
+              severity: "success",
+              link: "/invest/dashboard?tab=profits",
+              relatedRef: d.reference,
+              inApp: false,
+              emailDetails: [
+                { label: "Project", value: d.projectName },
+                { label: "Profit Period", value: d.period },
+                { label: "Profit Credited", value: fmtMoney(d.amount) },
+                { label: "Total Profit to Date", value: fmtMoney(d.totalPaid) },
+              ],
+            });
           }
           if (outcome.closureDoc) {
             const d = outcome.closureDoc;
@@ -273,7 +401,7 @@ export async function runMonthlySettlement(trigger: "scheduler" | "admin" = "sch
                 { label: "Project", value: d.projectName },
                 { label: "Principal Invested", value: fmtMoney(d.principal) },
                 { label: "Total Profit Earned", value: fmtMoney(d.totalPaid) },
-                { label: "Duration", value: `${d.durationMonths} months` },
+                { label: "Duration", value: `${d.durationDays} days` },
                 { label: "Status", value: "Completed — Principal Returned" },
               ],
               note: "This certificate confirms the successful completion of your investment. Principal and all profits have been returned to your wallet.",
@@ -283,6 +411,22 @@ export async function runMonthlySettlement(trigger: "scheduler" | "admin" = "sch
               category: "investment_support",
               body: `Congratulations! Your investment in ${d.projectName} (${d.planName}) has completed successfully. Principal of ${fmtMoney(d.principal)} and total profit of ${fmtMoney(d.totalPaid)} have been returned to your wallet. Reference: ${d.reference}.`,
               notify: false,
+            });
+            void notifyUser(outcome.investorInfo.id, {
+              type: "investment_completed",
+              category: "investments",
+              title: "Investment Completed",
+              message: `Congratulations! Your investment in ${d.projectName} (${d.planName}) has completed. Principal of ${fmtMoney(d.principal)} and total profit of ${fmtMoney(d.totalPaid)} have been returned to your wallet.`,
+              severity: "success",
+              link: "/invest/dashboard?tab=portfolio",
+              relatedRef: d.reference,
+              inApp: false,
+              emailDetails: [
+                { label: "Project", value: d.projectName },
+                { label: "Principal Returned", value: fmtMoney(d.principal) },
+                { label: "Total Profit Earned", value: fmtMoney(d.totalPaid) },
+                { label: "Duration", value: `${d.durationDays} days` },
+              ],
             });
           }
         }

@@ -28,7 +28,7 @@ export default function InvestorRegister() {
   const selectedPlan = searchParams.get("plan");
 
   useEffect(() => {
-    if (isAuthenticated) navigate("/invest/dashboard");
+    if (isAuthenticated) navigate("/invest/dashboard", { replace: true });
   }, [isAuthenticated, navigate]);
 
   const register = trpc.investorAuth.register.useMutation({

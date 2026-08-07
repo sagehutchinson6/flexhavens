@@ -4,7 +4,7 @@ import { Link, useNavigate } from "react-router";
 import {
   LogOut, Search, Package, DollarSign, Clock, Building2, CheckCircle,
   ChevronDown, ChevronUp, RefreshCw, MessageSquare,
-  Home, Shield, Trash2, Upload, FileText, Download, Loader2
+  Home, Shield, Trash2, Upload, FileText, Download, Loader2, Pencil, Images, Users
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,6 +13,8 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { trpc } from "@/providers/trpc";
 import { PURCHASE_STAGES } from "@contracts/purchase-stages";
+import AdminPropertyMedia from "@/components/admin/AdminPropertyMedia";
+import AdminTeam from "@/components/admin/AdminTeam";
 
 const statusLabels: Record<string, string> = Object.fromEntries([
   ...PURCHASE_STAGES.map((s) => [s.key, s.label] as const),
@@ -38,13 +40,15 @@ export default function AdminDashboard({ embedded = false }: { embedded?: boolea
   const [statusFilter, setStatusFilter] = useState("all");
   const [expandedOrder, setExpandedOrder] = useState<number | null>(null);
   const [updateNotes, setUpdateNotes] = useState<Record<number, string>>({});
-  const [activeTab, setActiveTab] = useState<"orders" | "contacts">("orders");
+  const [activeTab, setActiveTab] = useState<"orders" | "contacts" | "properties" | "media" | "team">("orders");
+  const [editingPriceId, setEditingPriceId] = useState<number | null>(null);
+  const [priceDraft, setPriceDraft] = useState("");
 
   useEffect(() => {
     if (embedded) return; // unified dashboard handles auth
     const isAuth = localStorage.getItem("flexhavens-admin");
     if (!isAuth) {
-      navigate("/admin");
+      navigate("/admin", { replace: true });
     }
   }, [navigate, embedded]);
 
@@ -52,12 +56,19 @@ export default function AdminDashboard({ embedded = false }: { embedded?: boolea
   const { data: adminMe } = trpc.admin.adminMe.useQuery(undefined, { retry: false });
   const canOrders = !adminMe || adminMe.role === "primary" || adminMe.permissions.includes("orders");
   const canContacts = !adminMe || adminMe.role === "primary" || adminMe.permissions.includes("contact");
+  const canCatalog = !adminMe || adminMe.role === "primary" || adminMe.permissions.includes("catalog");
+  const canContent = !adminMe || adminMe.role === "primary" || adminMe.permissions.includes("content");
 
   useEffect(() => {
     if (!adminMe) return;
-    if (activeTab === "orders" && !canOrders && canContacts) setActiveTab("contacts");
-    if (activeTab === "contacts" && !canContacts && canOrders) setActiveTab("orders");
-  }, [adminMe, activeTab, canOrders, canContacts]);
+    const allowed: Record<string, boolean> = { orders: canOrders, contacts: canContacts, properties: canCatalog, media: canCatalog, team: canContent };
+    if (!allowed[activeTab]) {
+      if (canOrders) setActiveTab("orders");
+      else if (canContacts) setActiveTab("contacts");
+      else if (canCatalog) setActiveTab("properties");
+      else if (canContent) setActiveTab("team");
+    }
+  }, [adminMe, activeTab, canOrders, canContacts, canCatalog, canContent]);
 
   const { data: stats, refetch: refetchStats } = trpc.admin.stats.useQuery(undefined, {
     enabled: canOrders,
@@ -69,6 +80,34 @@ export default function AdminDashboard({ embedded = false }: { embedded?: boolea
   const { data: contacts, refetch: refetchContacts } = trpc.admin.contacts.useQuery(undefined, {
     enabled: activeTab === "contacts" && canContacts,
   });
+  const { data: properties, refetch: refetchProperties } = trpc.admin.properties.useQuery(undefined, {
+    enabled: (activeTab === "properties" || activeTab === "media") && canCatalog,
+  });
+
+  const updatePrice = trpc.admin.updatePropertyPrice.useMutation({
+    onSuccess: (data) => {
+      toast.success(
+        `Price updated — ${data.product.name} is now ${formatCurrency(Number(data.product.price))}. Existing purchases keep their agreed price.`,
+      );
+      setEditingPriceId(null);
+      setPriceDraft("");
+      refetchProperties();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const savePrice = (p: any) => {
+    const value = Number(priceDraft);
+    if (!Number.isFinite(value) || value <= 0) {
+      toast.error("Enter a valid price greater than zero.");
+      return;
+    }
+    const confirmed = window.confirm(
+      `Change the price of ${p.name}?\n\nCurrent price: ${formatCurrency(Number(p.price))}\nNew price: ${formatCurrency(value)}\n\nThe new price becomes the current selling price everywhere. Existing purchases, contracts and receipts keep their original agreed price.`,
+    );
+    if (!confirmed) return;
+    updatePrice.mutate({ productId: p.id, price: value });
+  };
 
   const updateStatus = trpc.admin.updateStatus.useMutation({
     onSuccess: () => {
@@ -296,6 +335,39 @@ export default function AdminDashboard({ embedded = false }: { embedded?: boolea
                   {stats.unreadContacts}
                 </span>
               )}
+            </button>
+          )}
+          {canCatalog && (
+            <button
+              onClick={() => setActiveTab("properties")}
+              className={`px-4 py-2 rounded-lg font-medium transition ${
+                activeTab === "properties" ? "bg-[#1e3a5f] text-white" : "bg-white text-gray-600 hover:bg-gray-100"
+              }`}
+            >
+              <Building2 className="w-4 h-4 inline mr-2" />
+              Property Prices
+            </button>
+          )}
+          {canCatalog && (
+            <button
+              onClick={() => setActiveTab("media")}
+              className={`px-4 py-2 rounded-lg font-medium transition ${
+                activeTab === "media" ? "bg-[#1e3a5f] text-white" : "bg-white text-gray-600 hover:bg-gray-100"
+              }`}
+            >
+              <Images className="w-4 h-4 inline mr-2" />
+              Property Media
+            </button>
+          )}
+          {canContent && (
+            <button
+              onClick={() => setActiveTab("team")}
+              className={`px-4 py-2 rounded-lg font-medium transition ${
+                activeTab === "team" ? "bg-[#1e3a5f] text-white" : "bg-white text-gray-600 hover:bg-gray-100"
+              }`}
+            >
+              <Users className="w-4 h-4 inline mr-2" />
+              Team
             </button>
           )}
         </div>
@@ -686,6 +758,139 @@ export default function AdminDashboard({ embedded = false }: { embedded?: boolea
             </div>
           </Card>
         )}
+
+        {activeTab === "properties" && canCatalog && (
+          <Card className="overflow-hidden">
+            <div className="px-4 py-3 bg-[#faf8f5] border-b border-[#c8956c]/15">
+              <p className="text-xs text-gray-600">
+                <span className="font-semibold text-[#1e3a5f]">Property Price Management.</span> The
+                price saved here becomes the current selling price across the catalog, property
+                pages, cart, checkout and mortgage calculators. Existing purchases, contracts,
+                receipts and mortgages always keep their original agreed price.
+              </p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Property</th>
+                    <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Category</th>
+                    <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Current Price</th>
+                    <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Status</th>
+                    <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {properties?.map((p: any) => {
+                    const img = Array.isArray(p.images) && p.images.length > 0 ? p.images[0] : null;
+                    const editing = editingPriceId === p.id;
+                    return (
+                      <tr key={p.id} className="hover:bg-gray-50 transition">
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-3">
+                            {img ? (
+                              <img src={img} alt={p.name} className="w-12 h-12 rounded-lg object-cover shrink-0" />
+                            ) : (
+                              <div className="w-12 h-12 rounded-lg bg-[#1e3a5f]/5 flex items-center justify-center shrink-0">
+                                <Building2 className="w-5 h-5 text-[#1e3a5f]" />
+                              </div>
+                            )}
+                            <div className="min-w-0">
+                              <p className="font-medium text-sm text-[#1e3a5f] truncate max-w-[220px]">{p.name}</p>
+                              <p className="text-xs text-gray-400">{p.size} · {p.bedrooms} bed</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <Badge variant="secondary" className="uppercase">{p.category}</Badge>
+                        </td>
+                        <td className="px-4 py-3">
+                          {editing ? (
+                            <div className="flex items-center gap-2">
+                              <span className="text-gray-400 text-sm">₦</span>
+                              <Input
+                                type="number"
+                                min="1"
+                                step="0.01"
+                                value={priceDraft}
+                                onChange={(e) => setPriceDraft(e.target.value)}
+                                className="w-40 h-9"
+                                autoFocus
+                              />
+                            </div>
+                          ) : (
+                            <span className="font-bold text-sm text-[#1e3a5f]">
+                              {formatCurrency(Number(p.price))}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          <Badge variant={p.isActive === "yes" ? "default" : "secondary"}>
+                            {p.isActive === "yes" ? "Active" : "Hidden"}
+                          </Badge>
+                        </td>
+                        <td className="px-4 py-3">
+                          {editing ? (
+                            <div className="flex items-center gap-2">
+                              <Button
+                                type="button"
+                                size="sm"
+                                onClick={() => savePrice(p)}
+                                disabled={updatePrice.isPending || !priceDraft}
+                                className="bg-[#1e3a5f] hover:bg-[#2d5a87]"
+                              >
+                                {updatePrice.isPending ? (
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                  <CheckCircle className="w-4 h-4 mr-1" />
+                                )}
+                                Save
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                  setEditingPriceId(null);
+                                  setPriceDraft("");
+                                }}
+                              >
+                                Cancel
+                              </Button>
+                            </div>
+                          ) : (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                setEditingPriceId(p.id);
+                                setPriceDraft(String(Number(p.price)));
+                              }}
+                            >
+                              <Pencil className="w-4 h-4 mr-1" />
+                              Edit Price
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              {(!properties || properties.length === 0) && (
+                <div className="text-center py-12">
+                  <Building2 className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                  <p className="text-gray-500">No properties found</p>
+                </div>
+              )}
+            </div>
+          </Card>
+        )}
+
+        {activeTab === "media" && canCatalog && <AdminPropertyMedia />}
+
+        {activeTab === "team" && canContent && <AdminTeam />}
       </main>
     </div>
   );

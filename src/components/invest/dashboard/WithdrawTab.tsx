@@ -1,18 +1,37 @@
-import { useState } from "react";
-import { Building2, Bitcoin, Wallet, ArrowUpFromLine, ShieldCheck } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Building2, Bitcoin, Smartphone, ArrowUpFromLine, ShieldCheck, Star, PlusCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { trpc } from "@/providers/trpc";
 import { formatCurrency, formatDate } from "@/hooks/use-investor";
+import { PAYMENT_METHOD_LABELS } from "@contracts/constants";
 import { SectionCard, StatusBadge, EmptyState } from "./shared";
 
 const methods = [
-  { id: "bank" as const, label: "Bank Account", icon: Building2, placeholder: "IBAN / Account number + routing" },
-  { id: "paypal" as const, label: "PayPal", icon: Wallet, placeholder: "PayPal email address" },
-  { id: "crypto" as const, label: "Crypto Wallet", icon: Bitcoin, placeholder: "BTC / ETH / USDT wallet address" },
+  { id: "bank" as const, label: "Bank Transfer", icon: Building2, placeholder: "Bank name, account name & account number" },
+  { id: "opay" as const, label: "OPay", icon: Smartphone, placeholder: "OPay account / phone number + account name" },
+  { id: "crypto" as const, label: "Cryptocurrency", icon: Bitcoin, placeholder: "Network (e.g. USDT TRC20) + wallet address" },
 ];
+
+type SavedAccount = {
+  id: number;
+  method: "bank" | "opay" | "crypto";
+  label: string;
+  bankName: string | null;
+  accountName: string | null;
+  accountNumber: string | null;
+  cryptoNetwork: string | null;
+  walletAddress: string | null;
+  isDefault: "yes" | "no";
+};
+
+export function accountSummary(a: SavedAccount): string {
+  if (a.method === "bank") return `${a.bankName ?? ""} • ${a.accountNumber ?? ""} • ${a.accountName ?? ""}`;
+  if (a.method === "opay") return `${a.accountNumber ?? ""} • ${a.accountName ?? ""}`;
+  return `${a.cryptoNetwork ?? ""} • ${a.walletAddress ?? ""}`;
+}
 
 export default function WithdrawTab({
   walletBalance,
@@ -24,11 +43,24 @@ export default function WithdrawTab({
   onWithdrawn: () => void;
 }) {
   const [amountStr, setAmountStr] = useState("");
-  const [method, setMethod] = useState<"bank" | "paypal" | "crypto">("bank");
+  const [method, setMethod] = useState<"bank" | "opay" | "crypto">("bank");
+  const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null);
+  const [manualMode, setManualMode] = useState(false);
   const [destination, setDestination] = useState("");
   const amount = Number(amountStr) || 0;
 
   const { data: withdrawals, refetch } = trpc.investor.withdrawals.useQuery(undefined, { retry: false, refetchInterval: 20_000 });
+  const { data: accounts } = trpc.investor.withdrawalAccounts.useQuery(undefined, { retry: false });
+
+  const methodAccounts = useMemo(
+    () => ((accounts ?? []) as SavedAccount[]).filter((a) => a.method === method),
+    [accounts, method],
+  );
+  const selectedAccount =
+    methodAccounts.find((a) => a.id === selectedAccountId) ??
+    methodAccounts.find((a) => a.isDefault === "yes") ??
+    null;
+  const useManual = manualMode || methodAccounts.length === 0;
 
   const withdraw = trpc.investor.withdraw.useMutation({
     onSuccess: (data) => {
@@ -50,11 +82,19 @@ export default function WithdrawTab({
       toast.error("Insufficient wallet balance");
       return;
     }
-    if (destination.trim().length < 4) {
-      toast.error("Please enter a valid destination");
-      return;
+    if (useManual) {
+      if (destination.trim().length < 4) {
+        toast.error("Please enter a valid destination");
+        return;
+      }
+      withdraw.mutate({ amount, method, destination: destination.trim() });
+    } else {
+      if (!selectedAccount) {
+        toast.error("Please select a saved account");
+        return;
+      }
+      withdraw.mutate({ amount, method, withdrawalAccountId: selectedAccount.id });
     }
-    withdraw.mutate({ amount, method, destination: destination.trim() });
   };
 
   const selectedMethod = methods.find((m) => m.id === method)!;
@@ -67,7 +107,7 @@ export default function WithdrawTab({
             <div>
               <Label htmlFor="withdraw-amount">Amount (₦)</Label>
               <div className="relative mt-1.5">
-                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold">$</span>
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold">₦</span>
                 <Input
                   id="withdraw-amount"
                   type="number"
@@ -94,7 +134,11 @@ export default function WithdrawTab({
                 {methods.map((m) => (
                   <button
                     key={m.id}
-                    onClick={() => setMethod(m.id)}
+                    onClick={() => {
+                      setMethod(m.id);
+                      setSelectedAccountId(null);
+                      setManualMode(false);
+                    }}
                     className={`p-3.5 rounded-xl border-2 text-center transition ${
                       method === m.id
                         ? "border-[#1e3a5f] bg-[#1e3a5f]/[0.04]"
@@ -108,16 +152,57 @@ export default function WithdrawTab({
               </div>
             </div>
 
-            <div>
-              <Label htmlFor="destination">{selectedMethod.label} Details</Label>
-              <Input
-                id="destination"
-                value={destination}
-                onChange={(e) => setDestination(e.target.value)}
-                placeholder={selectedMethod.placeholder}
-                className="mt-1.5 h-12"
-              />
-            </div>
+            {methodAccounts.length > 0 && (
+              <div>
+                <Label htmlFor="saved-account">Saved {selectedMethod.label} Accounts</Label>
+                <select
+                  id="saved-account"
+                  value={useManual ? "manual" : (selectedAccount?.id ?? "")}
+                  onChange={(e) => {
+                    if (e.target.value === "manual") {
+                      setManualMode(true);
+                      setSelectedAccountId(null);
+                    } else {
+                      setManualMode(false);
+                      setSelectedAccountId(Number(e.target.value));
+                    }
+                  }}
+                  className="mt-1.5 w-full h-12 px-3 rounded-md border border-input bg-background text-sm"
+                >
+                  {methodAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.label} — {accountSummary(a)}
+                      {a.isDefault === "yes" ? " ★" : ""}
+                    </option>
+                  ))}
+                  <option value="manual">Use a different account…</option>
+                </select>
+                {!useManual && selectedAccount && (
+                  <div className="mt-2 flex items-start gap-2 bg-gray-50 border border-gray-200 rounded-xl p-3 text-xs text-gray-600">
+                    {selectedAccount.isDefault === "yes" && <Star className="w-3.5 h-3.5 text-[#c8956c] shrink-0 mt-0.5 fill-[#c8956c]" />}
+                    <span className="break-all">{accountSummary(selectedAccount)}</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {useManual && (
+              <div>
+                <Label htmlFor="destination">{selectedMethod.label} Details</Label>
+                <Input
+                  id="destination"
+                  value={destination}
+                  onChange={(e) => setDestination(e.target.value)}
+                  placeholder={selectedMethod.placeholder}
+                  className="mt-1.5 h-12"
+                />
+                {methodAccounts.length === 0 && (
+                  <p className="text-[11px] text-gray-400 mt-1.5 flex items-center gap-1">
+                    <PlusCircle className="w-3 h-3" /> Tip: save this account in Settings → Withdrawal Accounts for faster withdrawals.
+                  </p>
+                )}
+              </div>
+            )}
 
             {kycStatus !== "verified" && (
               <div className="flex gap-2.5 bg-amber-50 border border-amber-200 rounded-xl p-3.5 text-xs text-amber-800">
@@ -151,7 +236,9 @@ export default function WithdrawTab({
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-[#1e3a5f]">
                       {formatCurrency(w.amount)}
-                      <span className="text-xs text-gray-400 font-normal ml-2 capitalize">via {w.method}</span>
+                      <span className="text-xs text-gray-400 font-normal ml-2">
+                        via {PAYMENT_METHOD_LABELS[w.method] ?? w.method}
+                      </span>
                     </p>
                     <p className="text-xs text-gray-400 mt-0.5 truncate max-w-xs">
                       {formatDate(w.createdAt)} · To {w.destination}

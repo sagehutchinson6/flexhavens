@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { CheckCircle, Star, Wallet } from "lucide-react";
+import { useMemo, useState, useEffect } from "react";
+import { CheckCircle, Star, Wallet, CalendarClock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -9,6 +9,43 @@ import { formatCurrency } from "@/hooks/use-investor";
 import { fallbackPlans, parsePlanFeatures, type PlanDisplay } from "@/lib/investment-plans";
 import { SectionCard } from "./shared";
 import { VerificationBadgeStrip } from "@/components/invest/VerificationBadge";
+
+// ── Flexible duration helpers (mirror the backend rules) ─────────
+type DurationCfg = { legacy: boolean; minDays: number; maxDays: number; allowedDays: number[] | null };
+
+function parseAllowedDays(raw?: string | null): number[] | null {
+  if (!raw) return null;
+  try {
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr)) {
+      const days = arr.map(Number).filter((n) => Number.isInteger(n) && n >= 1 && n <= 365);
+      if (days.length) return [...new Set(days)].sort((a, b) => a - b) as number[];
+    }
+  } catch {
+    /* fall through */
+  }
+  return null;
+}
+
+function durationCfgFor(plan: any, project: any | null): DurationCfg {
+  const legacyDays = Number(plan?.durationMonths ?? 0) * 30;
+  const projectConfigured =
+    !!project && (project.minDurationDays != null || project.maxDurationDays != null || !!project.allowedDurationDays);
+  const src = projectConfigured ? project : plan;
+  const configured = !!src && (src.minDurationDays != null || src.maxDurationDays != null || !!src.allowedDurationDays);
+  if (!configured) {
+    return { legacy: true, minDays: legacyDays, maxDays: legacyDays, allowedDays: null };
+  }
+  const allowed = parseAllowedDays(src.allowedDurationDays);
+  const minDays = src.minDurationDays ?? (allowed ? allowed[0] : 1);
+  const maxDays = src.maxDurationDays ?? (allowed ? allowed[allowed.length - 1] : 365);
+  return {
+    legacy: false,
+    minDays: Math.max(1, Math.min(365, minDays)),
+    maxDays: Math.max(1, Math.min(365, maxDays)),
+    allowedDays: allowed,
+  };
+}
 
 export default function InvestTab({
   walletBalance,
@@ -35,6 +72,26 @@ export default function InvestTab({
   const [projectId, setProjectId] = useState<number | undefined>(undefined);
   const amount = Number(amountStr) || 0;
 
+  const selectedProject = projects.find((p: any) => p.id === projectId) ?? null;
+  const durationCfg = useMemo(() => durationCfgFor(selectedPlan, selectedProject), [selectedPlan, selectedProject]);
+  const [durationDays, setDurationDays] = useState<number | null>(null);
+
+  // Reset the selected duration whenever the effective config changes
+  useEffect(() => {
+    if (durationCfg.legacy) {
+      setDurationDays(null);
+    } else {
+      setDurationDays(durationCfg.allowedDays ? durationCfg.allowedDays[0] : durationCfg.minDays);
+    }
+  }, [durationCfg.legacy, durationCfg.minDays, durationCfg.maxDays, durationCfg.allowedDays]);
+
+  const effectiveDays = durationCfg.legacy ? durationCfg.minDays : (durationDays ?? durationCfg.minDays);
+  const maturityDate = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + effectiveDays);
+    return d;
+  }, [effectiveDays]);
+
   const projectedEarnings = useMemo(
     () => (amount * (selectedPlan?.targetReturn ?? 0)) / 100,
     [amount, selectedPlan],
@@ -60,7 +117,21 @@ export default function InvestTab({
       toast.error("Insufficient wallet balance. Please deposit first.");
       return;
     }
-    invest.mutate({ planId: selectedPlan.id, amount, projectId });
+    if (!durationCfg.legacy) {
+      if (durationDays == null) {
+        toast.error("Please select an investment duration");
+        return;
+      }
+      if (durationCfg.allowedDays && !durationCfg.allowedDays.includes(durationDays)) {
+        toast.error("Please choose one of the available durations");
+        return;
+      }
+      if (durationDays < durationCfg.minDays || durationDays > durationCfg.maxDays) {
+        toast.error(`Duration must be between ${durationCfg.minDays} and ${durationCfg.maxDays} days`);
+        return;
+      }
+    }
+    invest.mutate({ planId: selectedPlan.id, amount, projectId, durationDays: durationCfg.legacy ? undefined : (durationDays ?? undefined) });
   };
 
   return (
@@ -75,6 +146,7 @@ export default function InvestTab({
             {plans.map((plan) => {
               const selected = selectedPlan?.id === plan.id;
               const features = parsePlanFeatures(plan.features).slice(0, 4);
+              const pcfg = durationCfgFor(plan, null);
               return (
                 <button
                   key={plan.id}
@@ -104,7 +176,8 @@ export default function InvestTab({
                           )}
                         </p>
                         <p className="text-xs text-gray-500 mt-0.5">
-                          Min {formatCurrency(plan.minAmount).replace(".00", "")} · up to {plan.targetReturn}% · {plan.durationMonths} months
+                          Min {formatCurrency(plan.minAmount).replace(".00", "")} · up to {plan.targetReturn}% ·{" "}
+                          {pcfg.legacy ? `${plan.durationMonths} months` : pcfg.allowedDays ? `${pcfg.allowedDays.join(" / ")} days` : `${pcfg.minDays}–${pcfg.maxDays} days`}
                         </p>
                       </div>
                     </div>
@@ -184,7 +257,7 @@ export default function InvestTab({
             Amount ({selectedPlan?.name} plan)
           </Label>
           <div className="relative mt-2 mb-1">
-            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold">$</span>
+            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold">₦</span>
             <Input
               id="invest-amount"
               type="number"
@@ -199,10 +272,52 @@ export default function InvestTab({
             Minimum {formatCurrency(min).replace(".00", "")}
           </p>
 
+          {!durationCfg.legacy && (
+            <div className="mb-5">
+              <Label htmlFor="invest-duration" className="text-gray-200 text-sm flex items-center gap-1.5">
+                <CalendarClock className="w-4 h-4 text-[#c8956c]" />
+                Investment Duration
+              </Label>
+              {durationCfg.allowedDays ? (
+                <select
+                  id="invest-duration"
+                  value={durationDays ?? durationCfg.allowedDays[0]}
+                  onChange={(e) => setDurationDays(Number(e.target.value))}
+                  className="mt-2 w-full h-12 px-3 rounded-md bg-white text-[#1e3a5f] font-semibold text-sm"
+                >
+                  {durationCfg.allowedDays.map((d) => (
+                    <option key={d} value={d}>
+                      {d} days
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <>
+                  <Input
+                    id="invest-duration"
+                    type="number"
+                    min={durationCfg.minDays}
+                    max={durationCfg.maxDays}
+                    value={durationDays ?? durationCfg.minDays}
+                    onChange={(e) => setDurationDays(Math.floor(Number(e.target.value) || 0))}
+                    className="mt-2 h-12 bg-white text-[#1e3a5f] font-bold"
+                  />
+                  <p className="text-xs text-gray-400 mt-1.5">
+                    Between {durationCfg.minDays} and {durationCfg.maxDays} days
+                  </p>
+                </>
+              )}
+            </div>
+          )}
+
           <div className="space-y-3 text-sm border-t border-white/10 pt-4 mb-6">
             <div className="flex justify-between">
               <span className="text-gray-300">Term</span>
-              <span className="font-semibold">{selectedPlan?.durationMonths} months</span>
+              <span className="font-semibold">{effectiveDays} days</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-300">Matures On</span>
+              <span className="font-semibold">{maturityDate.toDateString()}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-gray-300">Target Return</span>

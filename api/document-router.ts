@@ -6,6 +6,7 @@ import { getDb } from "./queries/connection";
 import { documents, documentDownloads, investors, investorNotifications } from "@db/schema";
 import { logAudit, logInvestorActivity } from "./lib/activity";
 import { sendSystemMessage } from "./lib/messaging";
+import { notifyUser } from "./lib/notify";
 import { DOCUMENT_CATEGORIES, DOCUMENT_STATUSES, DOCUMENT_TYPE_OPTIONS, DOCUMENT_UPLOAD } from "@contracts/documents";
 
 const categoryKeys = DOCUMENT_CATEGORIES.map((c) => c.key) as [string, ...string[]];
@@ -185,6 +186,18 @@ export const documentRouter = createRouter({
           body: `A new document "${input.name}" (${input.docType}) has been added to your Document Center. Open the Documents tab in your dashboard to view or download it.`,
           propertyName: input.propertyName ?? null,
           notify: false,
+        });
+        void notifyUser(inv.id, {
+          type: "document_uploaded",
+          category: "documents",
+          title: "New Document Available",
+          message: `A new document "${input.name}" (${input.docType}) has been added to your Document Center.`,
+          link: "/invest/dashboard?tab=documents",
+          inApp: false,
+          emailDetails: [
+            { label: "Document", value: input.name },
+            { label: "Type", value: input.docType },
+          ],
         });
       }
       await logAudit(ctx.investor.id, adminName, "document_uploaded", `Uploaded "${input.name}" (${docRef}, ${input.category}/${input.docType}) for ${input.investorEmail}`, ctx.req.headers);

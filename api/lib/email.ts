@@ -1,4 +1,4 @@
-import { Resend } from "resend";
+import type { Transporter } from "nodemailer";
 
 // ── Brand constants (mirrors the FlexHavens site theme) ─────────
 const Brand = {
@@ -51,11 +51,25 @@ export function appBaseUrl(reqHeaders?: Headers): string {
 // ── SMTP transport ──────────────────────────────────────────────
 let transporterPromise: Promise<Transporter | null> | null = null;
 
-export function isSmtpConfigured(): boolean {
-  return Boolean(process.env.RESEND_API_KEY);
+function getTransporter(): Promise<Transporter | null> {
+  if (!transporterPromise) {
+    transporterPromise = (async () => {
+      const host = process.env.SMTP_HOST;
+      if (!host) return null;
+      const port = Number(process.env.SMTP_PORT ?? 587);
+      const user = process.env.SMTP_USER;
+      const pass = process.env.SMTP_PASS;
+      const nodemailer = (await import("nodemailer")).default;
+      return nodemailer.createTransport({
+        host,
+        port,
+        secure: port === 465,
+        auth: user ? { user, pass } : undefined,
+      });
+    })();
+  }
+  return transporterPromise;
 }
-
-const resend = new Resend(process.env.RESEND_API_KEY ?? "");
 
 export async function sendEmail(opts: {
   to: string;
@@ -63,24 +77,21 @@ export async function sendEmail(opts: {
   html: string;
   text: string;
 }): Promise<{ sent: boolean; reason?: string }> {
-  if (!process.env.RESEND_API_KEY) {
-    console.error("Resend API key is not configured.");
-    return { sent: false, reason: "resend-not-configured" };
-  }
-
   try {
-    const from = process.env.EMAIL_FROM ?? Company.email;
-    await resend.emails.send({
-      from,
+    const transporter = await getTransporter();
+    if (!transporter) return { sent: false, reason: "smtp-not-configured" };
+    const from = process.env.SMTP_FROM ?? process.env.SMTP_USER ?? Company.email;
+    await transporter.sendMail({
+      from: `"${Company.name}" <${from}>`,
       to: opts.to,
       subject: opts.subject,
       html: opts.html,
       text: opts.text,
     });
     return { sent: true };
-  } catch (error: any) {
-    console.error("Resend send failed:", error);
-    return { sent: false, reason: error instanceof Error ? error.message : "send-failed" };
+  } catch (err) {
+    console.error("email send failed:", err);
+    return { sent: false, reason: err instanceof Error ? err.message : "send-failed" };
   }
 }
 
@@ -426,6 +437,147 @@ export function buildAdminEmailChangeNoticeEmail(opts: { name: string; newEmail:
   };
 }
 
+export function buildAdminEmailChangedEmail(opts: { name: string; oldEmail: string; newEmail: string; baseUrl: string }): { subject: string; html: string; text: string } {
+  const firstName = escapeHtml(opts.name.trim().split(/\s+/)[0] || "Admin");
+  const body = `
+              <p style="margin:0 0 14px;font-family:${Brand.sans};font-size:15px;line-height:24px;color:${Brand.text};">Hi ${firstName},</p>
+              <p style="margin:0 0 6px;font-family:${Brand.sans};font-size:15px;line-height:24px;color:${Brand.text};">
+                The email address on your FlexHavens administrator account has been changed successfully.
+              </p>
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:14px 0 4px;border:1px solid #efe9e0;border-radius:10px;">
+                <tr>
+                  <td style="padding:10px 16px;font-family:${Brand.sans};font-size:12px;color:${Brand.muted};border-bottom:1px solid #efe9e0;">Previous email</td>
+                  <td style="padding:10px 16px;font-family:${Brand.sans};font-size:13px;color:${Brand.text};border-bottom:1px solid #efe9e0;" align="right">${escapeHtml(opts.oldEmail)}</td>
+                </tr>
+                <tr>
+                  <td style="padding:10px 16px;font-family:${Brand.sans};font-size:12px;color:${Brand.muted};">New email</td>
+                  <td style="padding:10px 16px;font-family:${Brand.sans};font-size:13px;color:${Brand.text};font-weight:600;" align="right">${escapeHtml(opts.newEmail)}</td>
+                </tr>
+              </table>
+              <p style="margin:10px 0 0;font-family:${Brand.sans};font-size:13px;line-height:20px;color:${Brand.text};">
+                The new address is verified and is now your administrator sign-in email.
+              </p>
+              <div style="border-top:1px solid #efe9e0;margin-top:28px;padding-top:18px;">
+                <p style="margin:0;font-family:${Brand.sans};font-size:12px;line-height:19px;color:${Brand.muted};">
+                  If you did not make this change, contact the Primary Administrator immediately.
+                </p>
+              </div>`;
+  return {
+    subject: "Your admin email address has been changed — FlexHavens",
+    html: layout({
+      title: "Your admin email address has been changed — FlexHavens",
+      preheader: "Your FlexHavens administrator email was updated.",
+      eyebrow: "Administrator Security",
+      heading: "Email Address Changed",
+      body,
+      baseUrl: opts.baseUrl,
+    }),
+    text: [
+      `Hi ${opts.name},`,
+      ``,
+      `The email address on your FlexHavens admin account has been changed.`,
+      `Previous email: ${opts.oldEmail}`,
+      `New email: ${opts.newEmail}`,
+      ``,
+      `The new address is verified and is now your sign-in email.`,
+      `If you did not make this change, contact the Primary Administrator immediately.`,
+      ``,
+      `— ${Company.legalName}`,
+    ].join("\n"),
+  };
+}
+
+export function buildInvestorEmailChangeEmail(opts: { name: string; newEmail: string; verifyUrl: string; baseUrl: string }): { subject: string; html: string; text: string } {
+  const firstName = escapeHtml(opts.name.trim().split(/\s+/)[0] || "Investor");
+  const body = `
+              <p style="margin:0 0 14px;font-family:${Brand.sans};font-size:15px;line-height:24px;color:${Brand.text};">Hi ${firstName},</p>
+              <p style="margin:0 0 6px;font-family:${Brand.sans};font-size:15px;line-height:24px;color:${Brand.text};">
+                You requested to change the email address on your FlexHavens account to
+                <strong>${escapeHtml(opts.newEmail)}</strong>. Please verify this address to complete the change.
+                Your current email remains active until then.
+              </p>
+              ${ctaButton(opts.verifyUrl, "Verify New Email Address")}
+              <p style="margin:10px 0 0;font-family:${Brand.sans};font-size:12px;line-height:18px;color:${Brand.muted};">This verification link expires in <strong>24 hours</strong> and can be used only once.</p>
+              ${fallbackLink(opts.verifyUrl)}
+              <div style="border-top:1px solid #efe9e0;margin-top:28px;padding-top:18px;">
+                <p style="margin:0;font-family:${Brand.sans};font-size:12px;line-height:19px;color:${Brand.muted};">
+                  If you didn't request this change, you can ignore this email — your account email will not change.
+                </p>
+              </div>`;
+  return {
+    subject: "Verify your new email address — FlexHavens",
+    html: layout({
+      title: "Verify your new email address — FlexHavens",
+      preheader: "Confirm your new account email address.",
+      eyebrow: "Account Security",
+      heading: "Verify Your New Email",
+      body,
+      baseUrl: opts.baseUrl,
+    }),
+    text: [
+      `Hi ${opts.name},`,
+      ``,
+      `You requested to change your FlexHavens account email to ${opts.newEmail}. Verify it here:`,
+      opts.verifyUrl,
+      ``,
+      `This link expires in 24 hours and can be used only once.`,
+      `Your current email remains active until the new address is verified.`,
+      ``,
+      `— ${Company.legalName}`,
+    ].join("\n"),
+  };
+}
+
+export function buildInvestorEmailChangedEmail(opts: { name: string; oldEmail: string; newEmail: string; baseUrl: string }): { subject: string; html: string; text: string } {
+  const firstName = escapeHtml(opts.name.trim().split(/\s+/)[0] || "Investor");
+  const body = `
+              <p style="margin:0 0 14px;font-family:${Brand.sans};font-size:15px;line-height:24px;color:${Brand.text};">Hi ${firstName},</p>
+              <p style="margin:0 0 6px;font-family:${Brand.sans};font-size:15px;line-height:24px;color:${Brand.text};">
+                The email address on your FlexHavens account has been changed successfully.
+              </p>
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:14px 0 4px;border:1px solid #efe9e0;border-radius:10px;">
+                <tr>
+                  <td style="padding:10px 16px;font-family:${Brand.sans};font-size:12px;color:${Brand.muted};border-bottom:1px solid #efe9e0;">Previous email</td>
+                  <td style="padding:10px 16px;font-family:${Brand.sans};font-size:13px;color:${Brand.text};border-bottom:1px solid #efe9e0;" align="right">${escapeHtml(opts.oldEmail)}</td>
+                </tr>
+                <tr>
+                  <td style="padding:10px 16px;font-family:${Brand.sans};font-size:12px;color:${Brand.muted};">New email</td>
+                  <td style="padding:10px 16px;font-family:${Brand.sans};font-size:13px;color:${Brand.text};font-weight:600;" align="right">${escapeHtml(opts.newEmail)}</td>
+                </tr>
+              </table>
+              <p style="margin:10px 0 0;font-family:${Brand.sans};font-size:13px;line-height:20px;color:${Brand.text};">
+                The new address is verified and is now your sign-in email.
+              </p>
+              <div style="border-top:1px solid #efe9e0;margin-top:28px;padding-top:18px;">
+                <p style="margin:0;font-family:${Brand.sans};font-size:12px;line-height:19px;color:${Brand.muted};">
+                  If you did not make this change, contact our support team immediately — your account may be at risk.
+                </p>
+              </div>`;
+  return {
+    subject: "Your email address has been changed — FlexHavens",
+    html: layout({
+      title: "Your email address has been changed — FlexHavens",
+      preheader: "Your FlexHavens account email was updated.",
+      eyebrow: "Account Security",
+      heading: "Email Address Changed",
+      body,
+      baseUrl: opts.baseUrl,
+    }),
+    text: [
+      `Hi ${opts.name},`,
+      ``,
+      `The email address on your FlexHavens account has been changed.`,
+      `Previous email: ${opts.oldEmail}`,
+      `New email: ${opts.newEmail}`,
+      ``,
+      `The new address is verified and is now your sign-in email.`,
+      `If you did not make this change, contact support immediately.`,
+      ``,
+      `— ${Company.legalName}`,
+    ].join("\n"),
+  };
+}
+
 export function buildAdminPasswordChangedEmail(opts: { name: string; baseUrl: string }): { subject: string; html: string; text: string } {
   const firstName = escapeHtml(opts.name.trim().split(/\s+/)[0] || "Admin");
   const body = `
@@ -591,4 +743,76 @@ export async function sendPurchaseProgressEmail(opts: {
     console.log(`[email:dev] purchase progress (${opts.stageLabel}) for ${opts.to} (${result.reason})`);
   }
   return result.sent;
+}
+
+// ── Generic branded event email (centralized notification system) ──
+export type EventEmailDetail = { label: string; value: string };
+
+export function buildEventEmail(opts: {
+  name: string;
+  eyebrow: string;
+  heading: string;
+  intro: string;
+  details?: EventEmailDetail[];
+  note?: string | null;
+  ctaLabel?: string;
+  ctaUrl?: string;
+  baseUrl: string;
+}): { subject: string; html: string; text: string } {
+  const firstName = escapeHtml(opts.name.trim().split(/\s+/)[0] || "there");
+  const detailRows = (opts.details ?? [])
+    .filter((d) => d.value)
+    .map(
+      (d) => `
+                <tr>
+                  <td style="padding:8px 0;border-bottom:1px solid #f0e9e0;font-family:${Brand.sans};font-size:11px;font-weight:bold;letter-spacing:1px;text-transform:uppercase;color:${Brand.muted};width:42%;vertical-align:top;">${escapeHtml(d.label)}</td>
+                  <td style="padding:8px 0;border-bottom:1px solid #f0e9e0;font-family:${Brand.sans};font-size:14px;line-height:20px;color:${Brand.navy};font-weight:600;text-align:right;">${escapeHtml(d.value)}</td>
+                </tr>`,
+    )
+    .join("");
+
+  const body = `
+              <p style="margin:0 0 14px;font-family:${Brand.sans};font-size:15px;line-height:24px;color:${Brand.text};">Hi ${firstName},</p>
+              <p style="margin:0 0 6px;font-family:${Brand.sans};font-size:15px;line-height:24px;color:${Brand.text};">${escapeHtml(opts.intro)}</p>
+              ${
+                detailRows
+                  ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:20px 0;background-color:#faf8f5;border-radius:10px;padding:14px 18px;">
+              ${detailRows}
+              </table>`
+                  : ""
+              }
+              ${opts.note ? `<p style="margin:14px 0 0;font-family:${Brand.sans};font-size:13px;line-height:20px;color:${Brand.text};background-color:#fdf6ee;border-left:4px solid ${Brand.copper};border-radius:6px;padding:12px 14px;">${escapeHtml(opts.note)}</p>` : ""}
+              ${opts.ctaUrl && opts.ctaLabel ? ctaButton(opts.ctaUrl, opts.ctaLabel) : ""}
+              <div style="border-top:1px solid #efe9e0;margin-top:28px;padding-top:18px;">
+                <p style="margin:0;font-family:${Brand.sans};font-size:12px;line-height:19px;color:${Brand.muted};">
+                  This is an automated notification from your FlexHavens Invest account. You can manage
+                  your email preferences from your dashboard at any time. Need help? Reply to this email
+                  or contact us at ${Company.email}.
+                </p>
+              </div>`;
+
+  const textLines = [
+    `Hi ${firstName},`,
+    ``,
+    opts.intro,
+    ``,
+    ...(opts.details ?? []).filter((d) => d.value).map((d) => `${d.label}: ${d.value}`),
+    opts.note ? `\nNote: ${opts.note}` : ``,
+    opts.ctaUrl ? `\n${opts.ctaLabel ?? "View details"}: ${opts.ctaUrl}` : ``,
+    ``,
+    `${Company.name} · ${Company.email} · ${Company.phone}`,
+  ];
+
+  return {
+    subject: `${opts.heading} — ${Company.name}`,
+    html: layout({
+      title: opts.heading,
+      preheader: opts.intro.slice(0, 140),
+      eyebrow: opts.eyebrow,
+      heading: opts.heading,
+      body,
+      baseUrl: opts.baseUrl,
+    }),
+    text: textLines.filter((l) => l !== undefined).join("\n"),
+  };
 }

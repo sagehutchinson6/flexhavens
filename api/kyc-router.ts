@@ -6,6 +6,7 @@ import { getDb } from "./queries/connection";
 import { investors, kycRequests, kycDocuments, kycHistory, investorNotifications, type Investor } from "@db/schema";
 import { logAudit, logInvestorActivity, notifyAdmin } from "./lib/activity";
 import { sendSystemMessage } from "./lib/messaging";
+import { notifyUser } from "./lib/notify";
 import {
   KYC_DOC_TYPES,
   KYC_REQUIRED_DOCS,
@@ -313,6 +314,17 @@ export const kycRouter = createRouter({
           category: "account_verification",
           body: `Congratulations! Your ${kycTierLabel(req.tierRequested)} verification has been approved. Your account is now fully verified and higher deposit and investment limits are active.`,
           notify: false,
+        });
+        void notifyUser(inv.id, {
+          type: "account_verified",
+          category: "account_security",
+          title: "Account Verification Approved",
+          message: `Congratulations! Your ${kycTierLabel(req.tierRequested)} verification has been approved. Higher deposit and investment limits are now active on your account.`,
+          severity: "success",
+          link: "/invest/dashboard?tab=verification",
+          inApp: false,
+          security: true,
+          emailDetails: [{ label: "Verification Tier", value: kycTierLabel(req.tierRequested) }],
         });
       } else if (input.decision === "reject") {
         await db.update(kycRequests).set({

@@ -9,6 +9,7 @@ import { quoteMortgage, addPeriod } from "./lib/mortgage";
 import { debitWallet } from "./lib/wallet";
 import { logInvestorActivity, notifyAdmin } from "./lib/activity";
 import { generatePdfDocument } from "./lib/documents";
+import { notifyUser } from "./lib/notify";
 import { captureLead, leadEvent } from "./lib/crm";
 
 // Payment receipt payload captured inside the transaction, read after commit.
@@ -167,6 +168,25 @@ export const mortgageRouter = createRouter({
         title: "Mortgage Application Submitted",
         message: `Your mortgage application ${reference} for ${product.name} (${plan.name}) was submitted and is awaiting review. Down payment on approval: ${fmtMoney(q.downPayment)}.`,
         type: "success",
+        category: "mortgages",
+        link: "/invest/dashboard?tab=mortgages",
+        relatedRef: reference,
+      });
+      void notifyUser(ctx.investor.id, {
+        type: "mortgage_application_submitted",
+        category: "mortgages",
+        title: "Mortgage Application Submitted",
+        message: `Your mortgage application for ${product.name} (${plan.name}) was submitted and is awaiting review.`,
+        severity: "success",
+        link: "/invest/dashboard?tab=mortgages",
+        relatedRef: reference,
+        inApp: false,
+        emailDetails: [
+          { label: "Property", value: product.name },
+          { label: "Plan", value: plan.name },
+          { label: "Total Payable", value: fmtMoney(q.totalPayable) },
+          { label: "Down Payment on Approval", value: fmtMoney(q.downPayment) },
+        ],
       });
       await notifyAdmin(
         "New Mortgage Application",

@@ -40,7 +40,7 @@ export default function MortgageApply() {
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
-      navigate(`/invest/login?next=/mortgage/apply/${productId}`);
+      navigate(`/invest/login?next=/mortgage/apply/${productId}`, { replace: true });
     }
   }, [authLoading, isAuthenticated, navigate, productId]);
 

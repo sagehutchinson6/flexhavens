@@ -2,6 +2,8 @@ import { z } from "zod";
 import { fmtMoney } from "./lib/format";
 import { generatePdfDocument } from "./lib/documents";
 import { sendSystemMessage } from "./lib/messaging";
+import { notifyUser } from "./lib/notify";
+import { LARGE_TRANSACTION_THRESHOLD } from "@contracts/notifications";
 import { TRPCError } from "@trpc/server";
 import { eq, desc, sql, and } from "drizzle-orm";
 import { createRouter, investAdminQuery } from "./middleware";
@@ -21,10 +23,11 @@ import {
   adminNotifications,
   auditLogs,
   liquidationRequests,
+  platformSettings,
 } from "@db/schema";
 import { ReferralBonus } from "@contracts/constants";
 import { sanitizeInvestor } from "./investor-auth-router";
-import { runMonthlySettlement, monthlyProfitFor, addMonths } from "./lib/roi";
+import { runMonthlySettlement, monthlyProfitFor, addMonths, addDays, effectiveDurationDays, payoutCountFor } from "./lib/roi";
 import { logAudit, notifyAdmin } from "./lib/activity";
 import { creditWallet, debitWallet, bumpCounter, requireAffected } from "./lib/wallet";
 
@@ -167,6 +170,19 @@ export const investAdminRouter = createRouter({
           : "Your investor account has been suspended. Please contact support for details.",
         input.status === "active" ? "success" : "warning",
       );
+      void notifyUser(input.investorId, {
+        type: input.status === "active" ? "account_reactivated" : "account_suspended",
+        category: "account_security",
+        title: input.status === "active" ? "Account Reactivated" : "Account Suspended",
+        message:
+          input.status === "active"
+            ? "Your investor account has been reactivated. Full access has been restored."
+            : "Your investor account has been suspended. Please contact support for details.",
+        severity: input.status === "active" ? "success" : "error",
+        security: true,
+        link: "/invest/dashboard",
+        inApp: false,
+      });
       return { success: true };
     }),
 
@@ -205,11 +221,19 @@ export const investAdminRouter = createRouter({
         features: z.array(z.string()).default([]),
         isActive: z.enum(["yes", "no"]),
         sortOrder: z.number().default(0),
+        // Flexible duration rules — all omitted/null = legacy fixed duration
+        minDurationDays: z.number().int().min(1).max(365).nullish(),
+        maxDurationDays: z.number().int().min(1).max(365).nullish(),
+        allowedDurationDays: z.array(z.number().int().min(1).max(365)).nullish(),
       }),
     )
     .mutation(async ({ input }) => {
       const db = getDb();
       const slug = input.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+      const allowed = (input.allowedDurationDays ?? []).filter((d) => d >= 1 && d <= 365);
+      if (input.minDurationDays != null && input.maxDurationDays != null && input.minDurationDays > input.maxDurationDays) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Minimum duration cannot be greater than the maximum duration." });
+      }
       const values = {
         name: input.name,
         slug,
@@ -217,6 +241,9 @@ export const investAdminRouter = createRouter({
         targetReturn: input.targetReturn,
         durationMonths: input.durationMonths,
         featured: input.featured,
+        minDurationDays: input.minDurationDays ?? null,
+        maxDurationDays: input.maxDurationDays ?? null,
+        allowedDurationDays: allowed.length > 0 ? JSON.stringify([...new Set(allowed)].sort((a, b) => a - b)) : null,
         description: input.description || null,
         features: JSON.stringify(input.features),
         isActive: input.isActive,
@@ -267,10 +294,18 @@ export const investAdminRouter = createRouter({
         expectedReturn: z.number().min(1).max(1000),
         durationMonths: z.number().min(1).max(120),
         status: z.enum(["open", "funding", "funded", "completed"]),
+        // Project-level flexible duration override (takes precedence over the plan)
+        minDurationDays: z.number().int().min(1).max(365).nullish(),
+        maxDurationDays: z.number().int().min(1).max(365).nullish(),
+        allowedDurationDays: z.array(z.number().int().min(1).max(365)).nullish(),
       }),
     )
     .mutation(async ({ input }) => {
       const db = getDb();
+      const allowed = (input.allowedDurationDays ?? []).filter((d) => d >= 1 && d <= 365);
+      if (input.minDurationDays != null && input.maxDurationDays != null && input.minDurationDays > input.maxDurationDays) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Minimum duration cannot be greater than the maximum duration." });
+      }
       const values = {
         name: input.name,
         location: input.location,
@@ -281,6 +316,9 @@ export const investAdminRouter = createRouter({
         expectedReturn: input.expectedReturn,
         durationMonths: input.durationMonths,
         status: input.status,
+        minDurationDays: input.minDurationDays ?? null,
+        maxDurationDays: input.maxDurationDays ?? null,
+        allowedDurationDays: allowed.length > 0 ? JSON.stringify([...new Set(allowed)].sort((a, b) => a - b)) : null,
       };
       if (input.id) {
         await db.update(investmentProjects).set(values).where(eq(investmentProjects.id, input.id));
@@ -295,6 +333,44 @@ export const investAdminRouter = createRouter({
     .mutation(async ({ input }) => {
       const db = getDb();
       await db.delete(investmentProjects).where(eq(investmentProjects.id, input.id));
+      return { success: true };
+    }),
+
+  // ── Deposit payment instructions (shown to investors per method) ──
+  paymentInstructions: investAdminQuery.query(async () => {
+    const db = getDb();
+    const rows = await db.select().from(platformSettings);
+    const map: Record<string, string> = {};
+    for (const r of rows) map[r.key] = r.value ?? "";
+    return {
+      bank: map["deposit_instructions_bank"] ?? "",
+      opay: map["deposit_instructions_opay"] ?? "",
+      crypto: map["deposit_instructions_crypto"] ?? "",
+    };
+  }),
+
+  updatePaymentInstructions: investAdminQuery
+    .input(
+      z.object({
+        bank: z.string().max(4000),
+        opay: z.string().max(4000),
+        crypto: z.string().max(4000),
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      const db = getDb();
+      const entries: Array<[string, string]> = [
+        ["deposit_instructions_bank", input.bank],
+        ["deposit_instructions_opay", input.opay],
+        ["deposit_instructions_crypto", input.crypto],
+      ];
+      for (const [key, value] of entries) {
+        await db
+          .insert(platformSettings)
+          .values({ key, value })
+          .onDuplicateKeyUpdate({ set: { value } });
+      }
+      await logAudit(null, ctx.investor.name, "payment_instructions_updated", "Deposit payment instructions updated (bank / OPay / crypto)", ctx.req.headers);
       return { success: true };
     }),
 
@@ -327,6 +403,7 @@ export const investAdminRouter = createRouter({
     .mutation(async ({ input, ctx }) => {
       const db = getDb();
       let depositDoc: DepositDocInfo | null = null;
+      let referralBonusInfo: { referrerId: number; bonus: number; referredName: string } | null = null;
       const result = await db.transaction(async (tx) => {
         const rows = await tx.select().from(deposits).where(eq(deposits.id, input.depositId)).limit(1);
         const deposit = rows.at(0);
@@ -406,6 +483,7 @@ export const investAdminRouter = createRouter({
                 .update(referrals)
                 .set({ bonusAmount: bonus.toFixed(2), status: "credited" })
                 .where(and(eq(referrals.referrerId, referrer.id), eq(referrals.referredId, investor.id)));
+              referralBonusInfo = { referrerId: referrer.id, bonus, referredName: investor.name };
             }
           }
         } else {
@@ -447,6 +525,53 @@ export const investAdminRouter = createRouter({
               ? `Your deposit of ${fmtMoney(depDoc.amount)} via ${depDoc.method.toUpperCase()} has been approved and credited to your wallet. Reference: ${depDoc.reference}.`
               : `Your deposit of ${fmtMoney(depDoc.amount)} was rejected.${input.note ? ` Reason: ${input.note}.` : ""} Reference: ${depDoc.reference}. Please contact support if you need assistance.`,
           notify: false,
+        });
+        const approved = input.decision === "approved";
+        void notifyUser(depDoc.investorId, {
+          type: approved ? "deposit_approved" : "deposit_rejected",
+          category: "wallet_payments",
+          title: approved ? "Deposit Approved" : "Deposit Rejected",
+          message: approved
+            ? `Your deposit of ${fmtMoney(depDoc.amount)} has been approved and credited to your wallet.`
+            : `Your deposit of ${fmtMoney(depDoc.amount)} was rejected.${input.note ? ` Reason: ${input.note}.` : ""}`,
+          severity: approved ? "success" : "error",
+          link: "/invest/dashboard?tab=transactions",
+          relatedRef: depDoc.reference,
+          inApp: false,
+          emailDetails: [
+            { label: "Amount", value: fmtMoney(depDoc.amount) },
+            { label: "Payment Method", value: depDoc.method.toUpperCase() },
+          ],
+        });
+        if (approved && depDoc.amount >= LARGE_TRANSACTION_THRESHOLD) {
+          void notifyUser(depDoc.investorId, {
+            type: "large_transaction",
+            category: "wallet_payments",
+            title: "Large Transaction Alert",
+            message: `A large deposit of ${fmtMoney(depDoc.amount)} was credited to your wallet. If you did not authorize this transaction, contact support immediately.`,
+            severity: "warning",
+            security: true,
+            link: "/invest/dashboard?tab=transactions",
+            relatedRef: depDoc.reference,
+            inApp: true,
+            emailDetails: [{ label: "Amount", value: fmtMoney(depDoc.amount) }],
+          });
+        }
+      }
+      const bonusInfo = referralBonusInfo as { referrerId: number; bonus: number; referredName: string } | null;
+      if (bonusInfo) {
+        void notifyUser(bonusInfo.referrerId, {
+          type: "referral_bonus_earned",
+          category: "referrals",
+          title: "Referral Bonus Credited",
+          message: `You earned a ${fmtMoney(bonusInfo.bonus)} referral bonus from ${bonusInfo.referredName}'s first approved deposit. It has been credited to your wallet.`,
+          severity: "success",
+          link: "/invest/dashboard?tab=referrals",
+          inApp: false,
+          emailDetails: [
+            { label: "Bonus Amount", value: fmtMoney(bonusInfo.bonus) },
+            { label: "Referred User", value: bonusInfo.referredName },
+          ],
         });
       }
       if (input.decision === "approved" && depDoc) {
@@ -594,6 +719,23 @@ export const investAdminRouter = createRouter({
                 ? `Your withdrawal of ${fmtMoney(wdInv.amount)} has been approved and is being processed. Reference: ${wdInv.reference}.`
                 : `Your withdrawal of ${fmtMoney(wdInv.amount)} was rejected and the funds were returned to your wallet.${input.note ? ` Reason: ${input.note}.` : ""} Reference: ${wdInv.reference}.`,
           notify: false,
+        });
+        const st = input.decision === "paid" ? "paid" : input.decision === "approved" ? "approved" : "rejected";
+        void notifyUser(wdInv.id, {
+          type: `withdrawal_${st}`,
+          category: "wallet_payments",
+          title: st === "paid" ? "Withdrawal Paid" : st === "approved" ? "Withdrawal Approved" : "Withdrawal Rejected",
+          message:
+            st === "paid"
+              ? `Your withdrawal of ${fmtMoney(wdInv.amount)} has been paid to your account.`
+              : st === "approved"
+                ? `Your withdrawal of ${fmtMoney(wdInv.amount)} has been approved and is being processed.`
+                : `Your withdrawal of ${fmtMoney(wdInv.amount)} was rejected and the funds were returned to your wallet.${input.note ? ` Reason: ${input.note}.` : ""}`,
+          severity: st === "rejected" ? "error" : "success",
+          link: "/invest/dashboard?tab=transactions",
+          relatedRef: wdInv.reference,
+          inApp: false,
+          emailDetails: [{ label: "Amount", value: fmtMoney(wdInv.amount) }],
         });
       }
       const wdDoc = withdrawalDoc as WithdrawalDocInfo | null;
@@ -762,10 +904,11 @@ export const investAdminRouter = createRouter({
         .map((i) => {
           const plan = planMap.get(i.planId);
           const returnRate = i.customReturnRate ?? plan?.targetReturn ?? 0;
+          const payoutCount = plan ? payoutCountFor(i, plan) : (i.durationDays ? Math.max(1, Math.ceil(i.durationDays / 30)) : 1);
           const { monthlyProfit, monthlyRate } = monthlyProfitFor(
             Number(i.amount),
             returnRate,
-            plan?.durationMonths ?? 1,
+            payoutCount,
           );
           return {
             ...i,
@@ -774,6 +917,8 @@ export const investAdminRouter = createRouter({
             investorAvatar: investorMap.get(i.investorId)?.avatar ?? null,
             planName: plan?.name ?? "Plan",
             durationMonths: plan?.durationMonths ?? 0,
+            durationDaysEffective: plan ? effectiveDurationDays(i, plan) : (i.durationDays ?? 0),
+            payoutCount,
             effectiveReturn: returnRate,
             monthlyProfit,
             monthlyRate,
@@ -800,7 +945,9 @@ export const investAdminRouter = createRouter({
           .set({
             status: "active",
             startDate: now,
-            maturityDate: addMonths(now, plan?.durationMonths ?? 12),
+            // Flexible-duration investments mature after their chosen number of days;
+            // legacy investments keep the plan's month-based duration.
+            maturityDate: addDays(now, effectiveDurationDays(inv, plan ?? { durationMonths: 12 })),
             nextProfitAt: now, // month-1 ROI is due immediately (investment month)
           })
           .where(and(eq(investments.id, inv.id), eq(investments.status, "pending")));
@@ -985,12 +1132,13 @@ export const investAdminRouter = createRouter({
         const plans = await tx.select().from(investmentPlans).where(eq(investmentPlans.id, inv.planId)).limit(1);
         const plan = plans[0];
         if (!plan) throw new TRPCError({ code: "NOT_FOUND", message: "Plan not found" });
-        if (inv.profitsPaid >= plan.durationMonths) {
+        const payoutCount = payoutCountFor(inv, plan);
+        if (inv.profitsPaid >= payoutCount) {
           throw new TRPCError({ code: "BAD_REQUEST", message: "All scheduled profits for this investment have been paid" });
         }
 
         const returnRate = inv.customReturnRate ?? plan.targetReturn;
-        const { monthlyProfit, monthlyRate } = monthlyProfitFor(Number(inv.amount), returnRate, plan.durationMonths);
+        const { monthlyProfit, monthlyRate } = monthlyProfitFor(Number(inv.amount), returnRate, payoutCount);
         const monthNumber = inv.profitsPaid + 1;
 
         // Unique (investmentId, monthNumber) index blocks double-crediting
@@ -1007,7 +1155,7 @@ export const investAdminRouter = createRouter({
           investorId: inv.investorId,
           amount: monthlyProfit,
           type: "earning",
-          description: `Monthly ROI profit (month ${monthNumber}/${plan.durationMonths}, manual credit) — ${inv.projectName}`,
+          description: `Monthly ROI profit (month ${monthNumber}/${payoutCount}, manual credit) — ${inv.projectName}`,
           reference: `PROF-${inv.id}-M${monthNumber}`,
           counters: { totalEarnings: true },
           skipFrozenCheck: true, // admin credit

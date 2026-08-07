@@ -1,10 +1,11 @@
 import { z } from "zod";
 import * as cookie from "cookie";
 import bcrypt from "bcryptjs";
+import { TRPCError } from "@trpc/server";
 import { createRouter, publicQuery, adminSessionQuery, adminPermQuery } from "./middleware";
 import { getDb } from "./queries/connection";
-import { orders, orderItems, customers, trackingHistory, orderDocuments, contactSubmissions, products, adminUsers, investors } from "@db/schema";
-import { eq, desc } from "drizzle-orm";
+import { orders, orderItems, customers, trackingHistory, orderDocuments, contactSubmissions, products, adminUsers, investors, teamMembers } from "@db/schema";
+import { eq, desc, asc } from "drizzle-orm";
 import { AdminSession } from "@contracts/constants";
 import { getSessionCookieOptions } from "./lib/cookies";
 import { signAdminToken, parsePermissions } from "./lib/admin-session";
@@ -17,6 +18,7 @@ import { fmtMoney } from "./lib/format";
 import { generatePdfDocument } from "./lib/documents";
 import { leadEvent } from "./lib/crm";
 import { sendSystemMessage } from "./lib/messaging";
+import { notifyUser } from "./lib/notify";
 import type { AdminUser } from "@db/schema";
 
 function sanitizeAdmin(admin: AdminUser) {
@@ -324,6 +326,16 @@ export const adminRouter = createRouter({
                   propertyName: null,
                   notify: false,
                 });
+                await notifyUser(invRows[0].id, {
+                  type: "property_handover_completed",
+                  category: "property",
+                  title: "Property Handover Completed",
+                  message: `Congratulations! Your property purchase (Order ${orderRow[0].orderNumber}) is complete and the property has been handed over. All purchase documents are available in your Documents vault.`,
+                  severity: "success",
+                  link: "/invest/dashboard?tab=purchases",
+                  relatedRef: orderRow[0].orderNumber,
+                  inApp: false,
+                });
               }
             })();
           }
@@ -415,4 +427,171 @@ export const adminRouter = createRouter({
     const db = getDb();
     return db.select().from(contactSubmissions).orderBy(desc(contactSubmissions.createdAt));
   }),
+
+  // ── Property Price Management (Catalog permission) ────────────
+  // The products.price column is the single source of truth for the
+  // current selling price — catalog, details, cart, checkout and
+  // mortgage calculators all read it live. Historical records are
+  // never touched: orders/orderItems store their own agreed totals
+  // and mortgages snapshot propertyPrice at application time, so a
+  // price change applies to new purchases only.
+  properties: adminPermQuery("catalog").query(async () => {
+    const db = getDb();
+    return db.select().from(products).orderBy(desc(products.createdAt));
+  }),
+
+  updatePropertyPrice: adminPermQuery("catalog")
+    .input(
+      z.object({
+        productId: z.number().int().positive(),
+        price: z
+          .number()
+          .positive("Price must be greater than zero")
+          .max(9_999_999_999.99, "Price is too large"),
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      const db = getDb();
+      const rows = await db.select().from(products).where(eq(products.id, input.productId)).limit(1);
+      const product = rows.at(0);
+      if (!product) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Property not found" });
+      }
+      const newPrice = input.price.toFixed(2);
+      const oldPrice = Number(product.price);
+      if (Number(newPrice) === oldPrice) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "The new price is the same as the current price",
+        });
+      }
+      await db.update(products).set({ price: newPrice }).where(eq(products.id, product.id));
+      await logAudit(
+        ctx.admin.id,
+        ctx.admin.displayName,
+        "property_price_updated",
+        `Property price updated: ${product.name} — ${fmtMoney(oldPrice)} → ${fmtMoney(Number(newPrice))}`,
+        ctx.req.headers,
+      );
+      return { success: true, product: { ...product, price: newPrice } };
+    }),
+
+  // ── Property Media Management (Catalog permission) ────────────
+  // products.images stays the single source of truth — catalog, property
+  // details, cards and search all read the same column, so replacing the
+  // image list updates the property everywhere at once. No duplicates.
+  updatePropertyImages: adminPermQuery("catalog")
+    .input(
+      z.object({
+        productId: z.number().int().positive(),
+        images: z.array(z.string().min(1).max(4_500_000)).max(12),
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      const db = getDb();
+      const rows = await db.select().from(products).where(eq(products.id, input.productId)).limit(1);
+      const product = rows.at(0);
+      if (!product) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Property not found" });
+      }
+      for (const img of input.images) {
+        const ok = img.startsWith("/") || img.startsWith("https://") || img.startsWith("http://") || img.startsWith("data:image/");
+        if (!ok) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid image source. Only site images, URLs or uploaded photos are allowed." });
+        }
+      }
+      const stored = JSON.stringify(input.images);
+      await db.update(products).set({ images: stored }).where(eq(products.id, product.id));
+      await logAudit(
+        ctx.admin.id,
+        ctx.admin.displayName,
+        "property_images_updated",
+        `Property images updated: ${product.name} — ${input.images.length} image(s)`,
+        ctx.req.headers,
+      );
+      return { success: true, product: { ...product, images: stored } };
+    }),
+
+  // ── Team Section Management (Content permission) ──────────────
+  teamMembers: adminPermQuery("content").query(async () => {
+    const db = getDb();
+    return db.select().from(teamMembers).orderBy(asc(teamMembers.sortOrder), asc(teamMembers.id));
+  }),
+
+  saveTeamMember: adminPermQuery("content")
+    .input(
+      z.object({
+        id: z.number().int().positive().optional(),
+        name: z.string().trim().min(2).max(150),
+        role: z.string().trim().min(2).max(150),
+        bio: z.string().trim().max(2000).optional(),
+        photo: z.string().max(4_500_000).optional(),
+        sortOrder: z.number().int().min(0).max(999).default(0),
+        isActive: z.enum(["yes", "no"]).default("yes"),
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      const db = getDb();
+      if (input.photo) {
+        const ok = input.photo.startsWith("/") || input.photo.startsWith("https://") || input.photo.startsWith("http://") || input.photo.startsWith("data:image/");
+        if (!ok) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid photo source. Only site images, URLs or uploaded photos are allowed." });
+        }
+      }
+      const values = {
+        name: input.name,
+        role: input.role,
+        bio: input.bio?.trim() || null,
+        photo: input.photo || null,
+        sortOrder: input.sortOrder,
+        isActive: input.isActive,
+      };
+      let memberId: number;
+      if (input.id != null) {
+        const existing = await db.select({ id: teamMembers.id }).from(teamMembers).where(eq(teamMembers.id, input.id)).limit(1);
+        if (!existing.at(0)) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Team member not found" });
+        }
+        await db.update(teamMembers).set(values).where(eq(teamMembers.id, input.id));
+        memberId = input.id;
+      } else {
+        const [row] = await db.insert(teamMembers).values(values).$returningId();
+        memberId = row.id;
+      }
+      await logAudit(
+        ctx.admin.id,
+        ctx.admin.displayName,
+        input.id != null ? "team_member_updated" : "team_member_added",
+        `Team member ${input.id != null ? "updated" : "added"}: ${input.name} (${input.role})`,
+        ctx.req.headers,
+      );
+      return { success: true, memberId };
+    }),
+
+  removeTeamMember: adminPermQuery("content")
+    .input(z.object({ id: z.number().int().positive() }))
+    .mutation(async ({ input, ctx }) => {
+      const db = getDb();
+      const existing = await db.select({ name: teamMembers.name }).from(teamMembers).where(eq(teamMembers.id, input.id)).limit(1);
+      await db.delete(teamMembers).where(eq(teamMembers.id, input.id));
+      await logAudit(
+        ctx.admin.id,
+        ctx.admin.displayName,
+        "team_member_removed",
+        `Team member removed: ${existing.at(0)?.name ?? `#${input.id}`}`,
+        ctx.req.headers,
+      );
+      return { success: true };
+    }),
+
+  reorderTeamMembers: adminPermQuery("content")
+    .input(z.object({ orderedIds: z.array(z.number().int().positive()).max(100) }))
+    .mutation(async ({ input, ctx }) => {
+      const db = getDb();
+      for (let i = 0; i < input.orderedIds.length; i++) {
+        await db.update(teamMembers).set({ sortOrder: i }).where(eq(teamMembers.id, input.orderedIds[i]));
+      }
+      await logAudit(ctx.admin.id, ctx.admin.displayName, "team_members_reordered", `Team order updated (${input.orderedIds.length} members)`, ctx.req.headers);
+      return { success: true };
+    }),
 });

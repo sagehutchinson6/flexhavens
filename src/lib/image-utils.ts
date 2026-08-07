@@ -39,3 +39,39 @@ export async function optimizeAvatar(
   if (webp.startsWith("data:image/webp")) return webp;
   return canvas.toDataURL("image/jpeg", 0.85);
 }
+
+/**
+ * Generic photo optimization (keeps aspect ratio): validates format/size,
+ * downscales so the longest edge is maxDimension, and re-encodes as JPEG.
+ * Used for property media and team photos.
+ */
+export async function optimizeImage(
+  file: File,
+  opts: { maxSizeMb?: number; maxDimension?: number; quality?: number } = {},
+): Promise<string> {
+  const maxSizeMb = opts.maxSizeMb ?? 8;
+  const maxDimension = opts.maxDimension ?? 1600;
+  const quality = opts.quality ?? 0.85;
+
+  if (!ACCEPTED.includes(file.type)) {
+    throw new Error("Please choose a JPG, JPEG, PNG or WEBP image.");
+  }
+  if (file.size > maxSizeMb * 1024 * 1024) {
+    throw new Error(`Image must be ${maxSizeMb} MB or smaller.`);
+  }
+
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
+  const w = Math.max(1, Math.round(bitmap.width * scale));
+  const h = Math.max(1, Math.round(bitmap.height * scale));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Could not process the image.");
+  ctx.drawImage(bitmap, 0, 0, w, h);
+  bitmap.close();
+
+  return canvas.toDataURL("image/jpeg", quality);
+}

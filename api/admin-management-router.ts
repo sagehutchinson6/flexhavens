@@ -9,7 +9,7 @@ import { adminUsers, adminTokens, auditLogs, accountDeletionFeedback } from "@db
 import { AdminPermissions, type AdminPermissionKey } from "@contracts/constants";
 import { parsePermissions } from "./lib/admin-session";
 import { logAudit } from "./lib/activity";
-import { appBaseUrl, sendEmail, buildAdminEmailChangeEmail, buildAdminEmailChangeNoticeEmail, buildAdminPasswordChangedEmail } from "./lib/email";
+import { appBaseUrl, sendEmail, buildAdminEmailChangeEmail, buildAdminEmailChangeNoticeEmail, buildAdminEmailChangedEmail, buildAdminPasswordChangedEmail } from "./lib/email";
 import type { AdminUser } from "@db/schema";
 
 const permissionKeys = AdminPermissions.map((p) => p.key) as AdminPermissionKey[];
@@ -270,6 +270,18 @@ export const adminManagementRouter = createRouter({
         throw new TRPCError({ code: "CONFLICT", message: "That email address is already in use" });
       }
 
+      // Invalidate any previous pending email-change tokens
+      await db
+        .update(adminTokens)
+        .set({ usedAt: new Date() })
+        .where(
+          and(
+            eq(adminTokens.adminId, ctx.admin.id),
+            eq(adminTokens.type, "email_change"),
+            isNull(adminTokens.usedAt),
+          ),
+        );
+
       const token = randomBytes(32).toString("hex");
       const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
       await db.insert(adminTokens).values({ adminId: ctx.admin.id, token, type: "email_change", newEmail, expiresAt });
@@ -298,7 +310,7 @@ export const adminManagementRouter = createRouter({
 
   confirmEmailChange: publicQuery
     .input(z.object({ token: z.string().min(1) }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const db = getDb();
       const rows = await db
         .select()
@@ -320,10 +332,31 @@ export const adminManagementRouter = createRouter({
       const admin = adminRows.at(0);
       if (!admin) throw new TRPCError({ code: "NOT_FOUND", message: "Administrator not found" });
 
+      // Re-check uniqueness in case the address was taken meanwhile
+      const taken = await db
+        .select({ id: adminUsers.id })
+        .from(adminUsers)
+        .where(eq(adminUsers.email, tokenRow.newEmail))
+        .limit(1);
+      if (taken.length) {
+        throw new TRPCError({ code: "CONFLICT", message: "That email address is now in use by another account" });
+      }
+
       const oldEmail = admin.email;
       await db.update(adminUsers).set({ email: tokenRow.newEmail, pendingEmail: null }).where(eq(adminUsers.id, admin.id));
       await db.update(adminTokens).set({ usedAt: new Date() }).where(eq(adminTokens.id, tokenRow.id));
       await logAudit(admin.id, admin.displayName, "email_changed", `Admin email changed: ${oldEmail} → ${tokenRow.newEmail}`);
+
+      // Confirmation email to the new address + security notice to the old one
+      const baseUrl = appBaseUrl(ctx.req.headers);
+      const confirmation = buildAdminEmailChangedEmail({
+        name: admin.displayName,
+        oldEmail,
+        newEmail: tokenRow.newEmail,
+        baseUrl,
+      });
+      await sendEmail({ to: tokenRow.newEmail, ...confirmation });
+      await sendEmail({ to: oldEmail, ...confirmation });
       return { success: true };
     }),
 

@@ -1,6 +1,6 @@
 import type { Investment, InvestmentPlan } from "@db/schema";
 import { LiquidationRules } from "@contracts/constants";
-import { monthlyProfitFor } from "./roi";
+import { monthlyProfitFor, payoutCountFor } from "./roi";
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
@@ -23,20 +23,21 @@ export interface LiquidationEstimate {
  * early-exit penalty.
  */
 export function computeLiquidationEstimate(
-  inv: Pick<Investment, "amount" | "customReturnRate" | "profitsPaid" | "totalProfitPaid" | "lastProfitAt" | "startDate">,
+  inv: Pick<Investment, "amount" | "customReturnRate" | "profitsPaid" | "totalProfitPaid" | "lastProfitAt" | "startDate" | "durationDays">,
   plan: Pick<InvestmentPlan, "targetReturn" | "durationMonths">,
   now: Date = new Date(),
 ): LiquidationEstimate {
   const principal = Number(inv.amount);
   const returnRate = inv.customReturnRate ?? plan.targetReturn;
-  const { monthlyProfit } = monthlyProfitFor(principal, returnRate, plan.durationMonths);
+  const payoutCount = payoutCountFor(inv, plan);
+  const { monthlyProfit } = monthlyProfitFor(principal, returnRate, payoutCount);
 
   const lastProfit = inv.lastProfitAt ? new Date(inv.lastProfitAt) : new Date(inv.startDate);
   const daysAccrued = Math.max(
     0,
     Math.floor((now.getTime() - lastProfit.getTime()) / (1000 * 60 * 60 * 24)),
   );
-  const monthsRemaining = Math.max(0, plan.durationMonths - inv.profitsPaid);
+  const monthsRemaining = Math.max(0, payoutCount - inv.profitsPaid);
   const accruedProfit =
     monthsRemaining > 0
       ? round2(Math.min((monthlyProfit * daysAccrued) / LiquidationRules.daysPerMonth, monthlyProfit))

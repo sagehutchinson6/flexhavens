@@ -20,6 +20,9 @@ const emptyPlan = {
   featuresText: "",
   isActive: "yes" as "yes" | "no",
   sortOrder: 0,
+  minDurationDays: "",
+  maxDurationDays: "",
+  allowedDaysText: "",
 };
 
 const emptyProject = {
@@ -33,7 +36,34 @@ const emptyProject = {
   expectedReturn: "",
   durationMonths: "",
   status: "open" as "open" | "funding" | "funded" | "completed",
+  minDurationDays: "",
+  maxDurationDays: "",
+  allowedDaysText: "",
 };
+
+function parseAllowedText(text: string): number[] {
+  return text
+    .split(/[,\n]/)
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isInteger(n) && n >= 1 && n <= 365);
+}
+
+function allowedTextFrom(raw: string | null | undefined): string {
+  if (!raw) return "";
+  try {
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr.join(", ") : "";
+  } catch {
+    return "";
+  }
+}
+
+function durationSummary(minD: number | null, maxD: number | null, allowedRaw: string | null): string | null {
+  const allowed = allowedTextFrom(allowedRaw);
+  if (allowed) return `${allowed} days`;
+  if (minD != null || maxD != null) return `${minD ?? 1}–${maxD ?? 365} days`;
+  return null;
+}
 
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   return (
@@ -111,6 +141,11 @@ export default function AdminPlansProjects() {
                   <p className="text-xs text-gray-500 mt-0.5">
                     Min {formatCurrency(plan.minAmount).replace(".00", "")} · up to {plan.targetReturn}% · {plan.durationMonths} mo
                   </p>
+                  {durationSummary(plan.minDurationDays, plan.maxDurationDays, plan.allowedDurationDays) && (
+                    <p className="text-[11px] text-[#b07d52] font-semibold mt-0.5">
+                      Flexible duration: {durationSummary(plan.minDurationDays, plan.maxDurationDays, plan.allowedDurationDays)}
+                    </p>
+                  )}
                 </div>
                 <StatusBadge status={plan.isActive === "yes" ? "active" : "cancelled"} />
               </div>
@@ -136,6 +171,9 @@ export default function AdminPlansProjects() {
                       featuresText: parsePlanFeatures(plan.features).join("\n"),
                       isActive: plan.isActive,
                       sortOrder: plan.sortOrder,
+                      minDurationDays: plan.minDurationDays != null ? String(plan.minDurationDays) : "",
+                      maxDurationDays: plan.maxDurationDays != null ? String(plan.maxDurationDays) : "",
+                      allowedDaysText: allowedTextFrom(plan.allowedDurationDays),
                     })
                   }
                 >
@@ -189,6 +227,11 @@ export default function AdminPlansProjects() {
                         <MapPin className="w-3 h-3 text-[#c8956c]" />
                         {project.location} · up to {project.expectedReturn}%
                       </p>
+                      {durationSummary(project.minDurationDays, project.maxDurationDays, project.allowedDurationDays) && (
+                        <p className="text-[11px] text-[#b07d52] font-semibold mt-0.5">
+                          Duration override: {durationSummary(project.minDurationDays, project.maxDurationDays, project.allowedDurationDays)}
+                        </p>
+                      )}
                     </div>
                     <StatusBadge status={project.status} />
                   </div>
@@ -216,6 +259,9 @@ export default function AdminPlansProjects() {
                           expectedReturn: String(project.expectedReturn),
                           durationMonths: String(project.durationMonths),
                           status: project.status,
+                          minDurationDays: project.minDurationDays != null ? String(project.minDurationDays) : "",
+                          maxDurationDays: project.maxDurationDays != null ? String(project.maxDurationDays) : "",
+                          allowedDaysText: allowedTextFrom(project.allowedDurationDays),
                         })
                       }
                     >
@@ -249,7 +295,7 @@ export default function AdminPlansProjects() {
                 <Input value={planForm.name} onChange={(e) => setPlanForm({ ...planForm, name: e.target.value })} className="mt-1.5" />
               </div>
               <div>
-                <Label>Min Amount ($)</Label>
+                <Label>Min Amount (₦)</Label>
                 <Input type="number" value={planForm.minAmount} onChange={(e) => setPlanForm({ ...planForm, minAmount: e.target.value })} className="mt-1.5" />
               </div>
               <div>
@@ -291,6 +337,29 @@ export default function AdminPlansProjects() {
                   className="mt-1.5 w-full rounded-md border border-input px-3 py-2 text-sm"
                 />
               </div>
+              <div className="col-span-2 border-t border-gray-100 pt-4">
+                <p className="text-sm font-semibold text-[#1e3a5f]">Flexible Investment Duration (days)</p>
+                <p className="text-[11px] text-gray-400 mt-0.5 mb-3">
+                  Leave all three fields empty to keep the fixed {planForm.durationMonths ? `${planForm.durationMonths}-month` : "legacy"} term
+                  (investors will not pick a duration). Set specific allowed options, or a min/max range, to let
+                  investors choose — between 1 and 365 days.
+                </p>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label>Min Duration (days)</Label>
+                    <Input type="number" min={1} max={365} value={planForm.minDurationDays} onChange={(e) => setPlanForm({ ...planForm, minDurationDays: e.target.value })} placeholder="e.g. 30" className="mt-1.5" />
+                  </div>
+                  <div>
+                    <Label>Max Duration (days)</Label>
+                    <Input type="number" min={1} max={365} value={planForm.maxDurationDays} onChange={(e) => setPlanForm({ ...planForm, maxDurationDays: e.target.value })} placeholder="e.g. 365" className="mt-1.5" />
+                  </div>
+                  <div className="col-span-2">
+                    <Label>Allowed Durations (optional, comma-separated)</Label>
+                    <Input value={planForm.allowedDaysText} onChange={(e) => setPlanForm({ ...planForm, allowedDaysText: e.target.value })} placeholder="e.g. 30, 90, 180, 365" className="mt-1.5" />
+                    <p className="text-[11px] text-gray-400 mt-1">When set, investors can only pick one of these exact durations.</p>
+                  </div>
+                </div>
+              </div>
             </div>
             <div className="flex gap-3">
               <Button
@@ -299,6 +368,13 @@ export default function AdminPlansProjects() {
                 onClick={() => {
                   if (!planForm.name || !planForm.minAmount || !planForm.targetReturn || !planForm.durationMonths) {
                     toast.error("Fill in all required fields");
+                    return;
+                  }
+                  const minD = planForm.minDurationDays ? Number(planForm.minDurationDays) : null;
+                  const maxD = planForm.maxDurationDays ? Number(planForm.maxDurationDays) : null;
+                  const allowed = parseAllowedText(planForm.allowedDaysText);
+                  if (minD != null && maxD != null && minD > maxD) {
+                    toast.error("Minimum duration cannot be greater than the maximum duration");
                     return;
                   }
                   upsertPlan.mutate({
@@ -312,6 +388,9 @@ export default function AdminPlansProjects() {
                     features: planForm.featuresText.split("\n").map((f) => f.trim()).filter(Boolean),
                     isActive: planForm.isActive,
                     sortOrder: planForm.sortOrder,
+                    minDurationDays: minD,
+                    maxDurationDays: maxD,
+                    allowedDurationDays: allowed.length > 0 ? allowed : null,
                   });
                 }}
               >
@@ -342,7 +421,7 @@ export default function AdminPlansProjects() {
                 <Input value={projectForm.category} onChange={(e) => setProjectForm({ ...projectForm, category: e.target.value })} className="mt-1.5" />
               </div>
               <div>
-                <Label>Target Amount ($)</Label>
+                <Label>Target Amount (₦)</Label>
                 <Input type="number" value={projectForm.targetAmount} onChange={(e) => setProjectForm({ ...projectForm, targetAmount: e.target.value })} className="mt-1.5" />
               </div>
               <div>
@@ -375,6 +454,27 @@ export default function AdminPlansProjects() {
                   className="mt-1.5 w-full rounded-md border border-input px-3 py-2 text-sm"
                 />
               </div>
+              <div className="col-span-2 border-t border-gray-100 pt-4">
+                <p className="text-sm font-semibold text-[#1e3a5f]">Duration Override (days)</p>
+                <p className="text-[11px] text-gray-400 mt-0.5 mb-3">
+                  Optional — when set, these rules override the plan's duration rules for investors
+                  who allocate to this project. Leave empty to inherit the plan's rules.
+                </p>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label>Min Duration (days)</Label>
+                    <Input type="number" min={1} max={365} value={projectForm.minDurationDays} onChange={(e) => setProjectForm({ ...projectForm, minDurationDays: e.target.value })} placeholder="e.g. 30" className="mt-1.5" />
+                  </div>
+                  <div>
+                    <Label>Max Duration (days)</Label>
+                    <Input type="number" min={1} max={365} value={projectForm.maxDurationDays} onChange={(e) => setProjectForm({ ...projectForm, maxDurationDays: e.target.value })} placeholder="e.g. 365" className="mt-1.5" />
+                  </div>
+                  <div className="col-span-2">
+                    <Label>Allowed Durations (optional, comma-separated)</Label>
+                    <Input value={projectForm.allowedDaysText} onChange={(e) => setProjectForm({ ...projectForm, allowedDaysText: e.target.value })} placeholder="e.g. 30, 90, 180, 365" className="mt-1.5" />
+                  </div>
+                </div>
+              </div>
             </div>
             <div className="flex gap-3">
               <Button
@@ -383,6 +483,13 @@ export default function AdminPlansProjects() {
                 onClick={() => {
                   if (!projectForm.name || !projectForm.location || !projectForm.category || !projectForm.targetAmount) {
                     toast.error("Fill in all required fields");
+                    return;
+                  }
+                  const minD = projectForm.minDurationDays ? Number(projectForm.minDurationDays) : null;
+                  const maxD = projectForm.maxDurationDays ? Number(projectForm.maxDurationDays) : null;
+                  const allowed = parseAllowedText(projectForm.allowedDaysText);
+                  if (minD != null && maxD != null && minD > maxD) {
+                    toast.error("Minimum duration cannot be greater than the maximum duration");
                     return;
                   }
                   upsertProject.mutate({
@@ -396,6 +503,9 @@ export default function AdminPlansProjects() {
                     expectedReturn: Number(projectForm.expectedReturn || 0),
                     durationMonths: Number(projectForm.durationMonths || 12),
                     status: projectForm.status,
+                    minDurationDays: minD,
+                    maxDurationDays: maxD,
+                    allowedDurationDays: allowed.length > 0 ? allowed : null,
                   });
                 }}
               >

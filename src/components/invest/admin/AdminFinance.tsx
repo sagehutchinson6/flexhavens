@@ -1,11 +1,72 @@
-import { useState } from "react";
-import { ArrowDownToLine, ArrowUpFromLine, Check, X } from "lucide-react";
+import { useState, useEffect } from "react";
+import { ArrowDownToLine, ArrowUpFromLine, Check, X, Settings2, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { trpc } from "@/providers/trpc";
 import { formatCurrency, formatDate } from "@/hooks/use-investor";
+import { PAYMENT_METHOD_LABELS } from "@contracts/constants";
 import { SectionCard, StatusBadge, EmptyState } from "../dashboard/shared";
 import InvestorAvatar from "@/components/invest/InvestorAvatar";
+
+/** Editor for the payment instructions investors see per deposit method. */
+export function AdminPaymentInstructions() {
+  const { data, refetch } = trpc.investAdmin.paymentInstructions.useQuery(undefined, { retry: false });
+  const [form, setForm] = useState({ bank: "", opay: "", crypto: "" });
+
+  useEffect(() => {
+    if (data) setForm({ bank: data.bank, opay: data.opay, crypto: data.crypto });
+  }, [data]);
+
+  const update = trpc.investAdmin.updatePaymentInstructions.useMutation({
+    onSuccess: () => {
+      toast.success("Deposit payment instructions updated — investors see them immediately.");
+      refetch();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const dirty = data && (form.bank !== data.bank || form.opay !== data.opay || form.crypto !== data.crypto);
+
+  return (
+    <SectionCard
+      title="Deposit Payment Instructions"
+      subtitle="Shown to investors on the deposit page for each method (bank / OPay / crypto)"
+      action={<Settings2 className="w-5 h-5 text-[#c8956c]" />}
+    >
+      <div className="space-y-4">
+        {(
+          [
+            ["bank", "Bank Transfer Instructions"],
+            ["opay", "OPay Instructions"],
+            ["crypto", "Cryptocurrency Instructions"],
+          ] as const
+        ).map(([key, label]) => (
+          <div key={key}>
+            <Label htmlFor={`pi-${key}`}>{label}</Label>
+            <textarea
+              id={`pi-${key}`}
+              value={form[key]}
+              onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
+              rows={4}
+              maxLength={4000}
+              placeholder={"Account details + step-by-step payment guidance for investors..."}
+              className="mt-1.5 w-full rounded-md border border-input px-3 py-2 text-sm"
+            />
+          </div>
+        ))}
+        <Button
+          onClick={() => update.mutate(form)}
+          disabled={update.isPending || !dirty}
+          className="bg-[#1e3a5f]"
+        >
+          {update.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+          Save Instructions
+        </Button>
+      </div>
+    </SectionCard>
+  );
+}
 
 const statusFilters = [
   { id: "all", label: "All" },
@@ -30,6 +91,7 @@ export function AdminDeposits() {
   });
 
   return (
+    <div className="space-y-6">
     <SectionCard
       title="Deposit Requests"
       subtitle={`${deposits?.length ?? 0} shown`}
@@ -56,7 +118,7 @@ export function AdminDeposits() {
               <div className="min-w-0">
                 <p className="font-bold text-[#1e3a5f]">
                   {formatCurrency(d.amount)}
-                  <span className="text-xs text-gray-400 font-normal ml-2 capitalize">via {d.method}</span>
+                  <span className="text-xs text-gray-400 font-normal ml-2">via {PAYMENT_METHOD_LABELS[d.method] ?? d.method}</span>
                 </p>
                 <div className="flex items-center gap-2 mt-1.5">
                   <InvestorAvatar name={d.investorName} avatar={d.investorAvatar} size="xs" />
@@ -106,6 +168,8 @@ export function AdminDeposits() {
         />
       )}
     </SectionCard>
+    <AdminPaymentInstructions />
+    </div>
   );
 }
 
@@ -159,7 +223,7 @@ export function AdminWithdrawals() {
               <div className="min-w-0">
                 <p className="font-bold text-[#1e3a5f]">
                   {formatCurrency(w.amount)}
-                  <span className="text-xs text-gray-400 font-normal ml-2 capitalize">via {w.method}</span>
+                  <span className="text-xs text-gray-400 font-normal ml-2">via {PAYMENT_METHOD_LABELS[w.method] ?? w.method}</span>
                 </p>
                 <div className="flex items-center gap-2 mt-1.5">
                   <InvestorAvatar name={w.investorName} avatar={w.investorAvatar} size="xs" />

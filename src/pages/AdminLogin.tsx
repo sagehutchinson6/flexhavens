@@ -14,7 +14,7 @@ export default function AdminLogin() {
 
   useEffect(() => {
     if (localStorage.getItem("flexhavens-admin")) {
-      navigate("/admin/dashboard");
+      navigate("/admin/dashboard", { replace: true });
     }
   }, [navigate]);
 
@@ -22,7 +22,8 @@ export default function AdminLogin() {
     onSuccess: (data) => {
       localStorage.setItem("flexhavens-admin", "true");
       toast.success(`Welcome back, ${data.admin.displayName}!`);
-      navigate("/admin/dashboard");
+      // Replace the login entry — Back should not return to the login form
+      navigate("/admin/dashboard", { replace: true });
     },
     onError: (err) => toast.error(err.message || "Invalid email or password"),
   });

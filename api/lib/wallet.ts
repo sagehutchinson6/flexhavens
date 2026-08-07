@@ -43,7 +43,7 @@ export type WalletTxType =
 
 export interface WalletOp {
   investorId: number;
-  /** Positive amount in dollars. */
+  /** Positive amount in Naira. */
   amount: number;
   type: WalletTxType;
   description: string;

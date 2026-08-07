@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router";
 import { UserCircle, Mail, KeyRound, Loader2, CheckCircle2, Camera } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -58,7 +57,7 @@ export default function AdminProfileSettings() {
     onSuccess: () => {
       toast.success("Password changed — please sign in again.", { duration: 6000 });
       localStorage.removeItem("flexhavens-admin");
-      navigate("/admin", { replace: true });
+      window.location.href = "/admin";
     },
     onError: (err) => toast.error(err.message),
   });

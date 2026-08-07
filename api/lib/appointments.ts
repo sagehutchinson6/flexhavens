@@ -6,6 +6,7 @@ import { getDb } from "../queries/connection";
 import { appointments, investorNotifications, type Appointment } from "@db/schema";
 import { appointmentTypeLabel } from "@contracts/crm";
 import { sendEmail, Company, appBaseUrl } from "./email";
+import { notifyUser } from "./notify";
 
 type DbLike = ReturnType<typeof getDb>;
 
@@ -74,6 +75,20 @@ export async function notifyCustomer(
         title,
         message,
         type: "info",
+        category: "meetings",
+        link: "/invest/dashboard?tab=appointments",
+        relatedRef: appt.appointmentRef,
+      });
+      // Branded email alongside the in-app record (honours meeting-reminder preference)
+      void notifyUser(appt.investorId, {
+        type: "appointment_update",
+        category: "meetings",
+        title,
+        message,
+        link: "/invest/dashboard?tab=appointments",
+        relatedRef: appt.appointmentRef,
+        inApp: false,
+        reqHeaders,
       });
     } else {
       const baseUrl = appBaseUrl(reqHeaders);

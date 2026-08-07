@@ -1,22 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
-import { CheckCircle, XCircle, MailWarning, MailCheck } from "lucide-react";
+import { CheckCircle, XCircle, MailWarning } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { trpc } from "@/providers/trpc";
 import { useInvestor } from "@/hooks/use-investor";
 import InvestAuthShell from "@/components/invest/InvestAuthShell";
 
-export default function VerifyEmail() {
+export default function VerifyEmailChange() {
   const [searchParams] = useSearchParams();
   const token = searchParams.get("token") || "";
-  const justSent = searchParams.get("sent") === "1";
   const { refetch } = useInvestor();
-  const [status, setStatus] = useState<"loading" | "success" | "error" | "no-token" | "sent">(
-    token ? "loading" : justSent ? "sent" : "no-token",
+  const [status, setStatus] = useState<"loading" | "success" | "error" | "no-token">(
+    token ? "loading" : "no-token",
   );
   const [errorMessage, setErrorMessage] = useState("");
 
-  const verify = trpc.investorAuth.verifyEmail.useMutation({
+  const confirm = trpc.investorAuth.confirmEmailChange.useMutation({
     onSuccess: () => {
       setStatus("success");
       refetch();
@@ -32,18 +31,18 @@ export default function VerifyEmail() {
   useEffect(() => {
     if (token && !fired.current) {
       fired.current = true;
-      verify.mutate({ token });
+      confirm.mutate({ token });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   return (
-    <InvestAuthShell title="Email Verification" subtitle="Confirming your email address">
+    <InvestAuthShell title="Email Change Verification" subtitle="Confirming your new email address">
       <div className="text-center py-4">
         {status === "loading" && (
           <>
             <div className="w-16 h-16 border-4 border-[#1e3a5f] border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-            <p className="text-gray-600">Verifying your email address...</p>
+            <p className="text-gray-600">Verifying your new email address...</p>
           </>
         )}
 
@@ -52,14 +51,14 @@ export default function VerifyEmail() {
             <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
               <CheckCircle className="w-8 h-8 text-green-600" />
             </div>
-            <h3 className="text-lg font-bold text-[#1e3a5f] mb-2">Email Verified!</h3>
+            <h3 className="text-lg font-bold text-[#1e3a5f] mb-2">Email Address Changed!</h3>
             <p className="text-sm text-gray-600 mb-6">
-              Your email has been verified successfully. You now have full access to your
-              investor dashboard.
+              Your new email address has been verified and is now your sign-in email. A
+              confirmation has been sent to both your old and new addresses.
             </p>
-            <Link to="/invest/dashboard">
+            <Link to="/invest/dashboard?tab=settings">
               <Button className="bg-gradient-to-r from-[#1e3a5f] to-[#2d5a87]">
-                Go to Dashboard
+                Go to Settings
               </Button>
             </Link>
           </>
@@ -72,27 +71,9 @@ export default function VerifyEmail() {
             </div>
             <h3 className="text-lg font-bold text-[#1e3a5f] mb-2">Verification Failed</h3>
             <p className="text-sm text-gray-600 mb-6">{errorMessage}</p>
-            <Link to="/invest/dashboard">
+            <Link to="/invest/dashboard?tab=settings">
               <Button variant="outline" className="border-[#1e3a5f] text-[#1e3a5f]">
-                Go to Dashboard
-              </Button>
-            </Link>
-          </>
-        )}
-
-        {status === "sent" && (
-          <>
-            <div className="w-16 h-16 bg-[#c8956c]/15 rounded-full flex items-center justify-center mx-auto mb-4">
-              <MailCheck className="w-8 h-8 text-[#b07d52]" />
-            </div>
-            <h3 className="text-lg font-bold text-[#1e3a5f] mb-2">Check Your Inbox</h3>
-            <p className="text-sm text-gray-600 mb-6">
-              We've emailed you a verification link. Click it within 24 hours to activate your
-              account — and check your spam folder if you don't see it.
-            </p>
-            <Link to="/invest/dashboard">
-              <Button className="bg-gradient-to-r from-[#1e3a5f] to-[#2d5a87]">
-                Continue to Dashboard
+                Go to Settings
               </Button>
             </Link>
           </>
@@ -105,8 +86,8 @@ export default function VerifyEmail() {
             </div>
             <h3 className="text-lg font-bold text-[#1e3a5f] mb-2">No Verification Token</h3>
             <p className="text-sm text-gray-600 mb-6">
-              This page expects a verification link from your email. You can request a new one
-              from your dashboard.
+              This page expects a verification link from your email. You can request an email
+              change from your dashboard settings.
             </p>
             <Link to="/invest/login">
               <Button variant="outline" className="border-[#1e3a5f] text-[#1e3a5f]">

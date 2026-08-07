@@ -47,6 +47,25 @@ export const AdminPermissions = [
 
 export type AdminPermissionKey = (typeof AdminPermissions)[number]["key"];
 
+// ── Payment Methods ─────────────────────────────────────────────
+// User-facing deposit/withdrawal methods. paypal/card remain in the
+// database enums for historical records only.
+export const PAYMENT_METHODS = [
+  { key: "bank", label: "Bank Transfer" },
+  { key: "opay", label: "OPay" },
+  { key: "crypto", label: "Cryptocurrency" },
+] as const;
+
+export type PaymentMethodKey = (typeof PAYMENT_METHODS)[number]["key"];
+
+export const PAYMENT_METHOD_LABELS: Record<string, string> = {
+  bank: "Bank Transfer",
+  opay: "OPay",
+  crypto: "Cryptocurrency",
+  paypal: "PayPal",
+  card: "Debit / Credit Card",
+};
+
 export const ErrorMessages = {
   unauthenticated: "Authentication required",
   insufficientRole: "Insufficient permissions",

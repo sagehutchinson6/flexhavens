@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { createRouter, publicQuery } from "./middleware";
 import { getDb } from "./queries/connection";
-import { products } from "@db/schema";
-import { eq } from "drizzle-orm";
+import { products, teamMembers } from "@db/schema";
+import { eq, asc } from "drizzle-orm";
 
 export const productsRouter = createRouter({
   list: publicQuery
@@ -32,4 +32,21 @@ export const productsRouter = createRouter({
       const result = await db.select().from(products).where(eq(products.id, input.id));
       return result[0] ?? null;
     }),
+
+  // Public team roster for the About / Team section (active members only)
+  teamMembers: publicQuery.query(async () => {
+    const db = getDb();
+    return db
+      .select({
+        id: teamMembers.id,
+        name: teamMembers.name,
+        role: teamMembers.role,
+        bio: teamMembers.bio,
+        photo: teamMembers.photo,
+        sortOrder: teamMembers.sortOrder,
+      })
+      .from(teamMembers)
+      .where(eq(teamMembers.isActive, "yes"))
+      .orderBy(asc(teamMembers.sortOrder), asc(teamMembers.id));
+  }),
 });

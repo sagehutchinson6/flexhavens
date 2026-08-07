@@ -2,10 +2,11 @@ import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import QRCode from "qrcode";
 import { getDb } from "../queries/connection";
-import { documents, investors, investorNotifications, type Document } from "@db/schema";
-import { eq } from "drizzle-orm";
+import { documents, investors, type Document } from "@db/schema";
+import { and, eq } from "drizzle-orm";
 import { logAudit, notifyAdmin } from "./activity";
 import { Company } from "./email";
+import { notifyUser } from "./notify";
 
 const NAVY: [number, number, number] = [30, 58, 95];
 const COPPER: [number, number, number] = [200, 149, 108];
@@ -43,6 +44,8 @@ export interface DocGenInput {
   lines: ReceiptLine[];
   note?: string;
   status?: Document["status"];
+  /** Set false to skip the in-app + email notification (default true). */
+  notify?: boolean;
 }
 
 function docRefFor(docType: string): string {
@@ -223,6 +226,16 @@ export async function generatePdfDocument(input: DocGenInput): Promise<number | 
       investorId = rows[0]?.id ?? null;
     }
 
+    // Duplicate guard: the same document (type + reference) is never generated twice
+    if (input.reference) {
+      const existing = await db
+        .select({ id: documents.id })
+        .from(documents)
+        .where(and(eq(documents.docType, input.docType), eq(documents.reference, input.reference)))
+        .limit(1);
+      if (existing.length) return existing[0].id;
+    }
+
     const dataUrl = await buildPdf(input, docRef, now);
     const name = input.name || `${input.docType} — ${input.reference ?? docRef}`;
 
@@ -252,12 +265,20 @@ export async function generatePdfDocument(input: DocGenInput): Promise<number | 
       })
       .$returningId();
 
-    if (investorId) {
-      await db.insert(investorNotifications).values({
-        investorId,
+    if (investorId && input.notify !== false) {
+      // Centralized notification: in-app record + branded email, deep-linked to this document
+      await notifyUser(investorId, {
+        type: "document_generated",
+        category: "documents",
         title: "New Document Available",
         message: `A new document "${name}" has been generated and is ready for download in your Document Center.`,
-        type: "info",
+        link: `/invest/dashboard?tab=documents&doc=${docRef}`,
+        relatedRef: input.reference ?? docRef,
+        ctaLabel: "View Document",
+        emailDetails: [
+          { label: "Document", value: name },
+          { label: "Type", value: input.docType },
+        ],
       });
     }
 

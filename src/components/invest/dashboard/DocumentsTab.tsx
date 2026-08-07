@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router";
 import { trpc } from "@/providers/trpc";
 import { toast } from "sonner";
 import {
@@ -74,6 +75,31 @@ export default function DocumentsTab() {
   );
 
   const docs = (query.data ?? []) as DocRow[];
+
+  // Deep link: /invest/dashboard?tab=documents&doc=<docRef> auto-opens the preview
+  const [searchParams, setSearchParams] = useSearchParams();
+  const deepLinkHandled = useRef<string | null>(null);
+  useEffect(() => {
+    const docRef = searchParams.get("doc");
+    if (!docRef || deepLinkHandled.current === docRef || query.isLoading) return;
+    if (!query.data) return;
+    deepLinkHandled.current = docRef;
+    const target = (query.data as DocRow[]).find((d) => d.docRef === docRef);
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("doc");
+        return next;
+      },
+      { replace: true },
+    );
+    if (target) {
+      void openDoc(target.id, "preview");
+    } else {
+      toast.info("That document is no longer available — browse your Document Center below.");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, query.data, query.isLoading]);
   const counts = useMemo(() => {
     const all = (query.data ?? []) as DocRow[];
     const map = new Map<string, number>();

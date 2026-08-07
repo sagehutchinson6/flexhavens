@@ -4,8 +4,10 @@ import { assertTierAllows } from "./lib/kyc";
 import { generatePdfDocument } from "./lib/documents";
 import { captureLead, leadEvent } from "./lib/crm";
 import { sendSystemMessage } from "./lib/messaging";
+import { notifyUser } from "./lib/notify";
+import { LARGE_TRANSACTION_THRESHOLD } from "@contracts/notifications";
 import { TRPCError } from "@trpc/server";
-import { eq, desc, or, and, sql, inArray } from "drizzle-orm";
+import { eq, desc, or, and, sql, inArray, isNull, gte, lte, like } from "drizzle-orm";
 import { createRouter, publicQuery, investorQuery } from "./middleware";
 import { getDb } from "./queries/connection";
 import {
@@ -14,6 +16,7 @@ import {
   investments,
   deposits,
   withdrawals,
+  withdrawalAccounts,
   investmentTransactions,
   referrals,
   investorNotifications,
@@ -31,9 +34,10 @@ import { computeLiquidationEstimate } from "./lib/liquidation";
 import { sanitizeInvestor, clearInvestorCookie } from "./investor-auth-router";
 import { logInvestorActivity, notifyAdmin, logAudit } from "./lib/activity";
 import { sendAccountDeletedEmail } from "./lib/email";
-import { monthlyProfitFor } from "./lib/roi";
+import { PAYMENT_METHOD_LABELS } from "@contracts/constants";
+import { monthlyProfitFor, payoutCountFor, effectiveDurationDays, durationConfigFor, validateDurationDays, addDays } from "./lib/roi";
 import { debitWallet } from "./lib/wallet";
-import { profitPayments, investors as investorTableForUpdate } from "@db/schema";
+import { profitPayments, investors as investorTableForUpdate, platformSettings } from "@db/schema";
 
 function generateReference(prefix: string) {
   const rand = Math.floor(100000 + Math.random() * 900000);
@@ -104,8 +108,9 @@ export const investorRouter = createRouter({
       const plan = planMap.get(inv.planId);
       const returnRate = inv.customReturnRate ?? plan?.targetReturn ?? Number(inv.roi);
       const durationMonths = plan?.durationMonths ?? 0;
+      const payoutCount = plan ? payoutCountFor(inv, plan) : durationMonths || 1;
       const { principal, progress, matured } = computeInvestmentState(inv);
-      const { monthlyProfit, monthlyRate } = monthlyProfitFor(principal, returnRate, durationMonths || 1);
+      const { monthlyProfit, monthlyRate } = monthlyProfitFor(principal, returnRate, payoutCount);
       const projectedEarnings = (principal * returnRate) / 100;
       const totalProfitPaid = Number(inv.totalProfitPaid);
       const currentValue =
@@ -121,6 +126,8 @@ export const investorRouter = createRouter({
         planName: plan?.name ?? "Plan",
         targetReturn: returnRate,
         durationMonths,
+        durationDaysEffective: plan ? effectiveDurationDays(inv, plan) : inv.durationDays ?? durationMonths * 30,
+        payoutCount,
         progress: inv.status === "active" ? progress : inv.progress,
         computedCurrentValue: currentValue,
         computedEstimatedEarnings: inv.status === "active" || inv.status === "suspended" ? totalProfitPaid : Number(inv.estimatedEarnings),
@@ -152,6 +159,8 @@ export const investorRouter = createRouter({
         and(
           or(eq(investorNotifications.investorId, investorId), sql`${investorNotifications.investorId} IS NULL`),
           eq(investorNotifications.isRead, "no"),
+          eq(investorNotifications.archived, "no"),
+          isNull(investorNotifications.deletedAt),
         ),
       );
 
@@ -163,6 +172,19 @@ export const investorRouter = createRouter({
       .select({ count: sql<number>`count(*)`, total: sql<string>`coalesce(sum(${withdrawals.amount}), 0)` })
       .from(withdrawals)
       .where(and(eq(withdrawals.investorId, investorId), eq(withdrawals.status, "pending")));
+
+    // Earnings credited during the current calendar month (realized ROI)
+    const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+    const monthProfits = await db
+      .select({ total: sql<string>`coalesce(sum(${profitPayments.amount}), 0)` })
+      .from(profitPayments)
+      .where(
+        and(
+          eq(profitPayments.investorId, investorId),
+          eq(profitPayments.status, "paid"),
+          gte(profitPayments.paidAt, monthStart),
+        ),
+      );
 
     return {
       investor: sanitizeInvestor(ctx.investor),
@@ -177,6 +199,7 @@ export const investorRouter = createRouter({
         unreadNotifications: Number(unreadNotifications[0]?.count ?? 0),
         totalMonthlyProfitEarned,
         monthlyIncome,
+        monthlyEarnings: Number(monthProfits[0]?.total ?? 0),
         pendingInvestments: portfolio.filter((i) => i.status === "pending").length,
         availableWithdrawalBalance: Number(ctx.investor.walletBalance),
         totalDeposited: Number(ctx.investor.totalDeposited),
@@ -212,8 +235,9 @@ export const investorRouter = createRouter({
       const plan = planMap.get(inv.planId);
       const returnRate = inv.customReturnRate ?? plan?.targetReturn ?? Number(inv.roi);
       const durationMonths = plan?.durationMonths ?? 0;
+      const payoutCount = plan ? payoutCountFor(inv, plan) : durationMonths || 1;
       const { principal, progress, matured } = computeInvestmentState(inv);
-      const { monthlyProfit, monthlyRate } = monthlyProfitFor(principal, returnRate, durationMonths || 1);
+      const { monthlyProfit, monthlyRate } = monthlyProfitFor(principal, returnRate, payoutCount);
       const totalProfitPaid = Number(inv.totalProfitPaid);
       const projectedEarnings = (principal * returnRate) / 100;
       const remainingDays = Math.max(
@@ -224,6 +248,8 @@ export const investorRouter = createRouter({
         ...inv,
         planName: plan?.name ?? "Plan",
         durationMonths,
+        durationDaysEffective: plan ? effectiveDurationDays(inv, plan) : inv.durationDays ?? durationMonths * 30,
+        payoutCount,
         targetReturn: returnRate,
         progress: inv.status === "active" ? progress : inv.progress,
         computedCurrentValue: inv.status === "active" || inv.status === "suspended" ? principal + totalProfitPaid : Number(inv.currentValue),
@@ -396,6 +422,7 @@ export const investorRouter = createRouter({
         planId: z.number(),
         amount: z.number().positive(),
         projectId: z.number().optional(),
+        durationDays: z.number().int().min(1).max(365).optional(),
       }),
     )
     .mutation(async ({ input, ctx }) => {
@@ -425,17 +452,42 @@ export const investorRouter = createRouter({
       }
 
       let projectName = `${plan.name} Plan Portfolio`;
+      let project: (typeof investmentProjects.$inferSelect) | null = null;
       if (input.projectId) {
         const projectRows = await db
           .select()
           .from(investmentProjects)
           .where(eq(investmentProjects.id, input.projectId))
           .limit(1);
-        if (projectRows.length) projectName = projectRows[0].name;
+        if (projectRows.length) {
+          project = projectRows[0];
+          projectName = project.name;
+        }
       }
 
-      const maturityDate = new Date();
-      maturityDate.setMonth(maturityDate.getMonth() + plan.durationMonths);
+      // ── Flexible duration ─────────────────────────────────────
+      // Backend enforcement: the selected duration must satisfy the
+      // admin's configured rules — API callers can't bypass the limits.
+      const durationCfg = durationConfigFor(plan, project);
+      let durationDays: number | null = null;
+      if (durationCfg.legacy) {
+        if (input.durationDays != null && input.durationDays !== durationCfg.minDays) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `The ${plan.name} plan has a fixed duration of ${durationCfg.minDays} days`,
+          });
+        }
+      } else {
+        if (input.durationDays == null) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Please select an investment duration" });
+        }
+        const err = validateDurationDays(durationCfg, input.durationDays);
+        if (err) throw new TRPCError({ code: "BAD_REQUEST", message: err });
+        durationDays = input.durationDays;
+      }
+      const effectiveDays = durationDays ?? durationCfg.minDays;
+
+      const maturityDate = addDays(new Date(), effectiveDays);
 
       const reference = generateReference("INV");
       const result = await db.transaction(async (tx) => {
@@ -463,6 +515,7 @@ export const investorRouter = createRouter({
             status: "pending", // activates after admin approval
             progress: 0,
             maturityDate,
+            durationDays,
           })
           .$returningId();
 
@@ -523,6 +576,22 @@ export const investorRouter = createRouter({
           body: `Your investment of ${fmtMoney(input.amount)} in the ${plan.name} plan (${projectName}) has been created successfully. Reference: ${reference}. Monthly profits are credited to your wallet automatically.`,
           propertyName: projectName,
         });
+        await notifyUser(ctx.investor.id, {
+          type: "investment_created",
+          category: "investments",
+          title: "Investment Created",
+          message: `Your investment of ${fmtMoney(input.amount)} in the ${plan.name} plan (${projectName}) has been created and will be activated after review.`,
+          severity: "success",
+          link: "/invest/dashboard?tab=portfolio",
+          relatedRef: reference,
+          inApp: false,
+          emailDetails: [
+            { label: "Plan", value: plan.name },
+            { label: "Project", value: projectName },
+            { label: "Amount Invested", value: fmtMoney(input.amount) },
+            { label: "Duration", value: `${effectiveDays} days` },
+          ],
+        });
         await logAudit(null, ctx.investor.name, "investment_created", `Investment created: ${fmtMoney(input.amount)} in ${plan.name} (${projectName}) by ${ctx.investor.name} (${ctx.investor.email}) — Ref ${reference}`, ctx.req.headers);
       })();
       void generatePdfDocument({
@@ -540,7 +609,7 @@ export const investorRouter = createRouter({
           { label: "Project", value: projectName },
           { label: "Amount Invested", value: fmtMoney(input.amount) },
           { label: "Expected ROI", value: `Up to ${plan.targetReturn}% monthly` },
-          { label: "Duration", value: `${plan.durationMonths} months` },
+          { label: "Duration", value: `${effectiveDays} days` },
           { label: "Maturity Date", value: maturityDate.toDateString() },
           { label: "Status", value: "Pending Activation" },
         ],
@@ -572,11 +641,14 @@ export const investorRouter = createRouter({
     .input(
       z.object({
         amount: z.number().positive(),
-        method: z.enum(["bank", "paypal", "crypto", "card"]),
+        // Legacy methods (paypal/card) remain accepted so older clients do not break;
+        // the user-facing UI only offers bank / opay / crypto.
+        method: z.enum(["bank", "paypal", "crypto", "card", "opay"]),
       }),
     )
     .mutation(async ({ input, ctx }) => {
       const db = getDb();
+      const methodLabel = PAYMENT_METHOD_LABELS[input.method] ?? input.method;
       if (input.amount < 100) {
         throw new TRPCError({ code: "BAD_REQUEST", message: `Minimum deposit is ${fmtMoney(100)}` });
       }
@@ -598,9 +670,22 @@ export const investorRouter = createRouter({
         type: "deposit",
         direction: "credit",
         amount: input.amount.toFixed(2),
-        description: `Deposit via ${input.method} (pending approval)`,
+        description: `Deposit via ${methodLabel} (pending approval)`,
         reference,
         status: "pending",
+      });
+
+      void notifyUser(ctx.investor.id, {
+        type: "deposit_submitted",
+        category: "wallet_payments",
+        title: "Deposit Submitted",
+        message: `Your deposit of ${fmtMoney(input.amount)} via ${methodLabel} has been submitted and is pending approval.`,
+        link: "/invest/dashboard?tab=transactions",
+        relatedRef: reference,
+        emailDetails: [
+          { label: "Amount", value: fmtMoney(input.amount) },
+          { label: "Payment Method", value: methodLabel },
+        ],
       });
 
       return { success: true, depositId: row.id, reference };
@@ -620,14 +705,18 @@ export const investorRouter = createRouter({
     .input(
       z.object({
         amount: z.number().positive(),
-        method: z.enum(["bank", "paypal", "crypto"]),
-        destination: z.string().min(4).max(500),
+        // Legacy "paypal" stays accepted; the UI only offers bank / opay / crypto.
+        method: z.enum(["bank", "paypal", "crypto", "opay"]),
+        destination: z.string().min(4).max(500).optional(),
+        // Optional saved withdrawal account — when provided, its details become the
+        // authoritative destination snapshot so the admin sees exactly where to pay.
+        withdrawalAccountId: z.number().int().positive().optional(),
       }),
     )
     .mutation(async ({ input, ctx }) => {
       const db = getDb();
       if (input.amount < 50) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: "Minimum withdrawal is $50" });
+        throw new TRPCError({ code: "BAD_REQUEST", message: `Minimum withdrawal is ${fmtMoney(50)}` });
       }
       if (ctx.investor.walletFrozen === "yes") {
         throw new TRPCError({ code: "FORBIDDEN", message: "Your wallet is currently frozen. Please contact support." });
@@ -639,14 +728,43 @@ export const investorRouter = createRouter({
         });
       }
 
+      // Resolve the destination: a saved account owned by this investor takes
+      // precedence; otherwise a manually-entered destination is required.
+      let destination = input.destination?.trim() ?? "";
+      let withdrawalAccountId: number | null = null;
+      if (input.withdrawalAccountId != null) {
+        const [account] = await db
+          .select()
+          .from(withdrawalAccounts)
+          .where(and(eq(withdrawalAccounts.id, input.withdrawalAccountId), eq(withdrawalAccounts.investorId, ctx.investor.id)))
+          .limit(1);
+        if (!account) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Selected withdrawal account was not found. Please choose another account." });
+        }
+        if (account.method !== input.method) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "The selected account does not match the chosen withdrawal method." });
+        }
+        withdrawalAccountId = account.id;
+        destination =
+          account.method === "bank"
+            ? `Bank: ${account.bankName ?? ""} • Acct: ${account.accountNumber ?? ""} • Name: ${account.accountName ?? ""}`
+            : account.method === "opay"
+              ? `OPay: ${account.accountNumber ?? ""} • Name: ${account.accountName ?? ""}`
+              : `${account.cryptoNetwork ?? "Crypto"}: ${account.walletAddress ?? ""}`;
+      }
+      if (!destination || destination.length < 4) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Please select a saved account or enter the destination details for this withdrawal." });
+      }
+
+      const methodLabel = PAYMENT_METHOD_LABELS[input.method] ?? input.method;
       const reference = generateReference("WDR");
-      return db.transaction(async (tx) => {
+      const wdResult = await db.transaction(async (tx) => {
         // Hold funds atomically — fails cleanly on insufficient balance or frozen wallet
         await debitWallet(tx, {
           investorId: ctx.investor.id,
           amount: input.amount,
           type: "withdrawal",
-          description: `Withdrawal via ${input.method} (pending approval)`,
+          description: `Withdrawal via ${methodLabel} (pending approval)`,
           reference,
           skipLedger: true, // pending ledger row inserted below
         });
@@ -657,7 +775,8 @@ export const investorRouter = createRouter({
             investorId: ctx.investor.id,
             amount: input.amount.toFixed(2),
             method: input.method,
-            destination: input.destination,
+            destination,
+            withdrawalAccountId,
             reference,
             status: "pending",
           })
@@ -668,27 +787,54 @@ export const investorRouter = createRouter({
           type: "withdrawal",
           direction: "debit",
           amount: input.amount.toFixed(2),
-          description: `Withdrawal via ${input.method} (pending approval)`,
+          description: `Withdrawal via ${methodLabel} (pending approval)`,
           reference,
           status: "pending",
         });
 
         await notifyAdmin(
           "Withdrawal Request Submitted",
-          `${ctx.investor.name} requested a withdrawal of ${fmtMoney(input.amount)} via ${input.method}.`,
+          `${ctx.investor.name} requested a withdrawal of ${fmtMoney(input.amount)} via ${methodLabel}. Destination: ${destination}`,
           "withdrawal",
           tx,
         );
         await logInvestorActivity(
           ctx.investor.id,
           "withdrawal_requested",
-          `${fmtMoney(input.amount)} via ${input.method} (${reference})`,
+          `${fmtMoney(input.amount)} via ${methodLabel} (${reference})`,
           ctx.req.headers,
           tx,
         );
 
         return { success: true, withdrawalId: row.id, reference };
       });
+      void notifyUser(ctx.investor.id, {
+        type: "withdrawal_requested",
+        category: "wallet_payments",
+        title: "Withdrawal Requested",
+        message: `Your withdrawal request of ${fmtMoney(input.amount)} via ${methodLabel} has been received and is pending approval. The funds are held from your wallet while it is processed.`,
+        link: "/invest/dashboard?tab=transactions",
+        relatedRef: reference,
+        emailDetails: [
+          { label: "Amount", value: fmtMoney(input.amount) },
+          { label: "Method", value: methodLabel },
+          { label: "Destination", value: destination },
+        ],
+      });
+      if (input.amount >= LARGE_TRANSACTION_THRESHOLD) {
+        void notifyUser(ctx.investor.id, {
+          type: "large_transaction",
+          category: "wallet_payments",
+          title: "Large Transaction Alert",
+          message: `A large withdrawal of ${fmtMoney(input.amount)} was requested from your wallet. If you did not authorize this transaction, contact support immediately.`,
+          severity: "warning",
+          security: true,
+          link: "/invest/dashboard?tab=transactions",
+          relatedRef: reference,
+          emailDetails: [{ label: "Amount", value: fmtMoney(input.amount) }],
+        });
+      }
+      return wdResult;
     }),
 
   withdrawals: investorQuery.query(async ({ ctx }) => {
@@ -698,6 +844,162 @@ export const investorRouter = createRouter({
       .from(withdrawals)
       .where(eq(withdrawals.investorId, ctx.investor.id))
       .orderBy(desc(withdrawals.createdAt));
+  }),
+
+  // ── Saved Withdrawal Accounts ─────────────────────────────────
+  withdrawalAccounts: investorQuery.query(async ({ ctx }) => {
+    const db = getDb();
+    const rows = await db
+      .select()
+      .from(withdrawalAccounts)
+      .where(eq(withdrawalAccounts.investorId, ctx.investor.id))
+      .orderBy(desc(withdrawalAccounts.isDefault), desc(withdrawalAccounts.createdAt));
+    return rows;
+  }),
+
+  saveWithdrawalAccount: investorQuery
+    .input(
+      z.object({
+        id: z.number().int().positive().optional(),
+        method: z.enum(["bank", "opay", "crypto"]),
+        label: z.string().trim().max(100).optional(),
+        bankName: z.string().trim().max(150).optional(),
+        accountName: z.string().trim().max(150).optional(),
+        accountNumber: z.string().trim().max(40).optional(),
+        cryptoNetwork: z.string().trim().max(80).optional(),
+        walletAddress: z.string().trim().max(255).optional(),
+        isDefault: z.boolean().optional(),
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      const db = getDb();
+      // Per-method required fields
+      if (input.method === "bank") {
+        if (!input.bankName || !input.accountName || !input.accountNumber) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Bank name, account name and account number are required for a bank account." });
+        }
+      } else if (input.method === "opay") {
+        if (!input.accountName || !input.accountNumber) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Account name and OPay account / phone number are required." });
+        }
+      } else if (!input.cryptoNetwork || !input.walletAddress) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Network and wallet address are required for a crypto account." });
+      }
+
+      const defaultLabel =
+        input.method === "bank" ? input.bankName!.trim() : input.method === "opay" ? "OPay" : input.cryptoNetwork!.trim();
+      const values = {
+        method: input.method,
+        label: (input.label?.trim() || defaultLabel).slice(0, 100),
+        bankName: input.method === "bank" ? input.bankName!.trim() : null,
+        accountName: input.method !== "crypto" ? input.accountName!.trim() : null,
+        accountNumber: input.method !== "crypto" ? input.accountNumber!.trim() : null,
+        cryptoNetwork: input.method === "crypto" ? input.cryptoNetwork!.trim() : null,
+        walletAddress: input.method === "crypto" ? input.walletAddress!.trim() : null,
+      };
+
+      let accountId: number;
+      if (input.id != null) {
+        const [existing] = await db
+          .select({ id: withdrawalAccounts.id })
+          .from(withdrawalAccounts)
+          .where(and(eq(withdrawalAccounts.id, input.id), eq(withdrawalAccounts.investorId, ctx.investor.id)))
+          .limit(1);
+        if (!existing) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Withdrawal account not found." });
+        }
+        await db
+          .update(withdrawalAccounts)
+          .set(values)
+          .where(and(eq(withdrawalAccounts.id, input.id), eq(withdrawalAccounts.investorId, ctx.investor.id)));
+        accountId = input.id;
+      } else {
+        const [row] = await db
+          .insert(withdrawalAccounts)
+          .values({ investorId: ctx.investor.id, ...values })
+          .$returningId();
+        accountId = row.id;
+      }
+
+      // Default handling: explicit default request, or the very first account
+      const [{ count }] = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(withdrawalAccounts)
+        .where(eq(withdrawalAccounts.investorId, ctx.investor.id));
+      if (input.isDefault || count === 1) {
+        await db
+          .update(withdrawalAccounts)
+          .set({ isDefault: "no" })
+          .where(eq(withdrawalAccounts.investorId, ctx.investor.id));
+        await db
+          .update(withdrawalAccounts)
+          .set({ isDefault: "yes" })
+          .where(and(eq(withdrawalAccounts.id, accountId), eq(withdrawalAccounts.investorId, ctx.investor.id)));
+      }
+
+      void logInvestorActivity(
+        ctx.investor.id,
+        input.id != null ? "withdrawal_account_updated" : "withdrawal_account_added",
+        `${PAYMENT_METHOD_LABELS[input.method] ?? input.method} account saved`,
+        ctx.req.headers,
+      );
+      return { success: true, accountId };
+    }),
+
+  removeWithdrawalAccount: investorQuery
+    .input(z.object({ id: z.number().int().positive() }))
+    .mutation(async ({ input, ctx }) => {
+      const db = getDb();
+      await db
+        .delete(withdrawalAccounts)
+        .where(and(eq(withdrawalAccounts.id, input.id), eq(withdrawalAccounts.investorId, ctx.investor.id)));
+      void logInvestorActivity(ctx.investor.id, "withdrawal_account_removed", `Withdrawal account #${input.id} removed`, ctx.req.headers);
+      return { success: true };
+    }),
+
+  setDefaultWithdrawalAccount: investorQuery
+    .input(z.object({ id: z.number().int().positive() }))
+    .mutation(async ({ input, ctx }) => {
+      const db = getDb();
+      const [existing] = await db
+        .select({ id: withdrawalAccounts.id })
+        .from(withdrawalAccounts)
+        .where(and(eq(withdrawalAccounts.id, input.id), eq(withdrawalAccounts.investorId, ctx.investor.id)))
+        .limit(1);
+      if (!existing) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Withdrawal account not found." });
+      }
+      await db
+        .update(withdrawalAccounts)
+        .set({ isDefault: "no" })
+        .where(eq(withdrawalAccounts.investorId, ctx.investor.id));
+      await db
+        .update(withdrawalAccounts)
+        .set({ isDefault: "yes" })
+        .where(and(eq(withdrawalAccounts.id, input.id), eq(withdrawalAccounts.investorId, ctx.investor.id)));
+      return { success: true };
+    }),
+
+  // ── Deposit payment instructions (admin-configured) ───────────
+  paymentInstructions: investorQuery.query(async () => {
+    const db = getDb();
+    const rows = await db
+      .select()
+      .from(platformSettings)
+      .where(
+        inArray(platformSettings.key, [
+          "deposit_instructions_bank",
+          "deposit_instructions_opay",
+          "deposit_instructions_crypto",
+        ]),
+      );
+    const map: Record<string, string> = {};
+    for (const r of rows) map[r.key] = r.value ?? "";
+    return {
+      bank: map["deposit_instructions_bank"] ?? "",
+      opay: map["deposit_instructions_opay"] ?? "",
+      crypto: map["deposit_instructions_crypto"] ?? "",
+    };
   }),
 
   // ── Transactions ──────────────────────────────────────────────
@@ -710,6 +1012,130 @@ export const investorRouter = createRouter({
       .orderBy(desc(investmentTransactions.createdAt))
       .limit(200);
   }),
+
+  // ── Wallet Activity (unified financial history) ───────────────
+  // One wallet, many transaction types. Groups:
+  //   deposits / withdrawals / funding (investment) / earnings (ROI)
+  //   liquidations (refund rows with a LIQ- reference or liquidation description)
+  //   refunds (all other refund rows) / mortgage / referral / other (adjustments)
+  //   property — reserved: property purchases on this platform are paid via bank
+  //   transfer proofs, not wallet debits, so this group currently matches nothing.
+  walletActivity: investorQuery
+    .input(
+      z
+        .object({
+          group: z
+            .enum([
+              "all",
+              "deposits",
+              "withdrawals",
+              "funding",
+              "earnings",
+              "liquidations",
+              "property",
+              "mortgage",
+              "referral",
+              "refunds",
+              "other",
+            ])
+            .default("all"),
+          status: z.enum(["all", "completed", "pending", "failed"]).default("all"),
+          search: z.string().trim().max(120).optional(),
+          dateFrom: z.string().trim().max(20).optional(),
+          dateTo: z.string().trim().max(20).optional(),
+          page: z.number().int().min(1).default(1),
+          pageSize: z.number().int().min(5).max(50).default(15),
+        })
+        .optional(),
+    )
+    .query(async ({ ctx, input }) => {
+      const db = getDb();
+      const group = input?.group ?? "all";
+      const status = input?.status ?? "all";
+      const search = input?.search?.trim() || "";
+      const page = input?.page ?? 1;
+      const pageSize = input?.pageSize ?? 15;
+
+      const conds: any[] = [eq(investmentTransactions.investorId, ctx.investor.id)];
+
+      const liqMatch = sql`(${investmentTransactions.reference} LIKE 'LIQ-%' OR ${investmentTransactions.description} LIKE '%liquidation%')`;
+      switch (group) {
+        case "deposits":
+          conds.push(eq(investmentTransactions.type, "deposit"));
+          break;
+        case "withdrawals":
+          conds.push(eq(investmentTransactions.type, "withdrawal"));
+          break;
+        case "funding":
+          conds.push(eq(investmentTransactions.type, "investment"));
+          break;
+        case "earnings":
+          conds.push(eq(investmentTransactions.type, "earning"));
+          break;
+        case "liquidations":
+          conds.push(eq(investmentTransactions.type, "refund"), liqMatch);
+          break;
+        case "refunds":
+          conds.push(
+            eq(investmentTransactions.type, "refund"),
+            sql`(${investmentTransactions.reference} IS NULL OR ${investmentTransactions.reference} NOT LIKE 'LIQ-%') AND ${investmentTransactions.description} NOT LIKE '%liquidation%'`,
+          );
+          break;
+        case "mortgage":
+          conds.push(eq(investmentTransactions.type, "mortgage_payment"));
+          break;
+        case "referral":
+          conds.push(eq(investmentTransactions.type, "referral_bonus"));
+          break;
+        case "other":
+          conds.push(eq(investmentTransactions.type, "adjustment"));
+          break;
+        case "property":
+          // No wallet-based property payments exist; kept for future use.
+          conds.push(sql`1 = 0`);
+          break;
+        case "all":
+        default:
+          break;
+      }
+
+      if (status !== "all") conds.push(eq(investmentTransactions.status, status));
+      if (search) {
+        const term = `%${search.replace(/[%_]/g, "")}%`;
+        conds.push(
+          or(
+            like(investmentTransactions.description, term),
+            like(investmentTransactions.reference, term),
+          ),
+        );
+      }
+      if (input?.dateFrom) {
+        const from = new Date(input.dateFrom);
+        if (!Number.isNaN(from.getTime())) conds.push(gte(investmentTransactions.createdAt, from));
+      }
+      if (input?.dateTo) {
+        const to = new Date(input.dateTo);
+        if (!Number.isNaN(to.getTime())) {
+          to.setHours(23, 59, 59, 999);
+          conds.push(lte(investmentTransactions.createdAt, to));
+        }
+      }
+
+      const where = and(...conds);
+      const [{ total }] = await db
+        .select({ total: sql<number>`COUNT(*)` })
+        .from(investmentTransactions)
+        .where(where);
+      const items = await db
+        .select()
+        .from(investmentTransactions)
+        .where(where)
+        .orderBy(desc(investmentTransactions.createdAt))
+        .limit(pageSize)
+        .offset((page - 1) * pageSize);
+
+      return { items, total: Number(total ?? 0), page, pageSize };
+    }),
 
   // ── Referrals ─────────────────────────────────────────────────
   referrals: investorQuery.query(async ({ ctx }) => {

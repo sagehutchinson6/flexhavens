@@ -1,7 +1,7 @@
 import { Link } from "react-router";
 import {
   Wallet, TrendingUp, Briefcase, DollarSign, Percent, ArrowRight, Bell,
-  Coins, CalendarClock, Banknote, ArrowDownCircle, ArrowUpCircle, Clock, Snowflake,
+  Coins, CalendarClock, Snowflake, Gauge, ArrowDownCircle, ArrowUpCircle,
 } from "lucide-react";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -10,7 +10,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { trpc } from "@/providers/trpc";
 import { formatCurrency, formatDate } from "@/hooks/use-investor";
-import { StatCard, SectionCard, StatusBadge, ProgressBar, EmptyState } from "./shared";
+import { StatCard, SectionCard, StatusBadge, ProgressBar, EmptyState, WalletSummary } from "./shared";
 import { VerificationBadgeStrip } from "@/components/invest/VerificationBadge";
 
 const CHART_COLORS = ["#1e3a5f", "#c8956c", "#2d5a87", "#8aa5c0"];
@@ -73,6 +73,15 @@ export default function OverviewTab({
       )
     : null;
 
+  // Average maturity progress across active plans (0-100).
+  const investmentProgress =
+    activePortfolio.length > 0
+      ? Math.round(
+          activePortfolio.reduce((sum: number, inv: any) => sum + Number(inv.progress ?? 0), 0) /
+            activePortfolio.length,
+        )
+      : 0;
+
   return (
     <div className="space-y-6">
       <VerificationBadgeStrip />
@@ -84,18 +93,40 @@ export default function OverviewTab({
           value={formatCurrency(stats?.portfolioValue ?? 0)}
           sub={`${stats?.activeInvestments ?? 0} active investment${(stats?.activeInvestments ?? 0) === 1 ? "" : "s"}`}
         />
-        <StatCard
-          icon={Wallet}
-          label="Wallet Balance"
-          value={formatCurrency(stats?.walletBalance ?? 0)}
-          sub="Available to invest or withdraw"
-          accent
-        />
+        {/* Main wallet card — one single balance, with quick actions */}
+        <div className="rounded-2xl p-6 border border-transparent bg-gradient-to-br from-[#c8956c] to-[#b07d52] text-white transition-all duration-300 hover:shadow-lg">
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-sm font-medium text-white/80">Wallet Balance</p>
+              <p className="text-2xl font-bold font-serif mt-1.5 text-white">
+                {formatCurrency(stats?.walletBalance ?? 0)}
+              </p>
+              <p className="text-xs mt-1.5 text-white/70">Available to invest or withdraw</p>
+            </div>
+            <div className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0 bg-white/20">
+              <Wallet className="w-5 h-5 text-white" />
+            </div>
+          </div>
+          <div className="flex items-center gap-2 mt-4 pt-3 border-t border-white/20">
+            <button
+              onClick={() => setTab("deposit")}
+              className="flex items-center gap-1 text-[11px] font-semibold bg-white/20 hover:bg-white/30 rounded-full px-2.5 py-1.5 transition"
+            >
+              <ArrowDownCircle className="w-3.5 h-3.5" /> Deposit
+            </button>
+            <button
+              onClick={() => setTab("withdraw")}
+              className="flex items-center gap-1 text-[11px] font-semibold bg-white/20 hover:bg-white/30 rounded-full px-2.5 py-1.5 transition"
+            >
+              <ArrowUpCircle className="w-3.5 h-3.5" /> Withdraw
+            </button>
+          </div>
+        </div>
         <StatCard
           icon={TrendingUp}
-          label="Estimated Earnings"
-          value={formatCurrency(stats?.estimatedEarnings ?? 0)}
-          sub="Accrued across active plans"
+          label="Total Earnings"
+          value={formatCurrency(stats?.totalEarnings ?? 0)}
+          sub={`Projected ${formatCurrency(stats?.estimatedEarnings ?? 0)} across active plans`}
         />
         <StatCard
           icon={Percent}
@@ -105,20 +136,24 @@ export default function OverviewTab({
         />
       </div>
 
-      {/* Monthly ROI stats */}
+      {/* Secondary stats: Active Investments / Monthly Earnings / Next Payment / Investment Progress */}
       <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <StatCard
-          icon={Coins}
-          label="Monthly Profit Earned"
-          value={formatCurrency(stats?.totalMonthlyProfitEarned ?? 0)}
-          sub="Total ROI paid to your wallet"
-          accent
+          icon={Briefcase}
+          label="Active Investments"
+          value={String(stats?.activeInvestments ?? 0)}
+          sub={
+            (stats?.pendingInvestments ?? 0) > 0
+              ? `${stats.pendingInvestments} pending approval`
+              : `${formatCurrency(stats?.portfolioValue ?? 0)} committed`
+          }
         />
         <StatCard
-          icon={Banknote}
-          label="Monthly Income"
-          value={formatCurrency(stats?.monthlyIncome ?? 0)}
-          sub="Expected payout every month"
+          icon={Coins}
+          label="Monthly Earnings"
+          value={formatCurrency(stats?.monthlyEarnings ?? 0)}
+          sub={`Credited this month · ${formatCurrency(stats?.monthlyIncome ?? 0)} expected monthly`}
+          accent
         />
         <StatCard
           icon={CalendarClock}
@@ -133,13 +168,13 @@ export default function OverviewTab({
           }
         />
         <StatCard
-          icon={Wallet}
-          label="Available to Withdraw"
-          value={formatCurrency(stats?.availableWithdrawalBalance ?? 0)}
+          icon={Gauge}
+          label="Investment Progress"
+          value={`${investmentProgress}%`}
           sub={
-            (stats?.pendingInvestments ?? 0) > 0
-              ? `${stats.pendingInvestments} investment${stats.pendingInvestments === 1 ? "" : "s"} pending approval`
-              : "Wallet balance ready"
+            activePortfolio.length > 0
+              ? `Average across ${activePortfolio.length} active plan${activePortfolio.length === 1 ? "" : "s"}`
+              : "No active investments yet"
           }
         />
       </div>
@@ -155,43 +190,8 @@ export default function OverviewTab({
         </div>
       )}
 
-      {/* Account totals */}
-      <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-4">
-        <StatCard
-          icon={ArrowDownCircle}
-          label="Total Deposited"
-          value={formatCurrency(stats?.totalDeposited ?? 0)}
-          sub={
-            (stats?.pendingDepositsCount ?? 0) > 0
-              ? `${formatCurrency(stats.pendingDepositsAmount)} pending approval`
-              : "All deposits processed"
-          }
-        />
-        <StatCard
-          icon={ArrowUpCircle}
-          label="Total Withdrawn"
-          value={formatCurrency(stats?.totalWithdrawn ?? 0)}
-          sub={`${stats?.withdrawalCount ?? 0} completed withdrawal${
-            (stats?.withdrawalCount ?? 0) === 1 ? "" : "s"
-          }${
-            (stats?.pendingWithdrawalsCount ?? 0) > 0
-              ? ` · ${formatCurrency(stats.pendingWithdrawalsAmount)} being processed`
-              : ""
-          }`}
-        />
-        <StatCard
-          icon={Clock}
-          label="Pending Deposits"
-          value={String(stats?.pendingDepositsCount ?? 0)}
-          sub={formatCurrency(stats?.pendingDepositsAmount ?? 0)}
-        />
-        <StatCard
-          icon={Clock}
-          label="Pending Withdrawals"
-          value={String(stats?.pendingWithdrawalsCount ?? 0)}
-          sub={formatCurrency(stats?.pendingWithdrawalsAmount ?? 0)}
-        />
-      </div>
+      {/* Wallet & Transaction Summary */}
+      <WalletSummary stats={stats} setTab={setTab} />
 
       {/* Charts row */}
       <div className="grid lg:grid-cols-5 gap-6">

@@ -8,6 +8,7 @@ import { products, mortgagePlans, mortgages, mortgagePayments, investors, invest
 import { logAudit } from "./lib/activity";
 import { generatePdfDocument } from "./lib/documents";
 import { sendSystemMessage } from "./lib/messaging";
+import { notifyUser } from "./lib/notify";
 
 function parsePlanIds(raw: string | null): number[] {
   try {
@@ -292,6 +293,21 @@ export const adminMortgageRouter = createRouter({
           body: message,
           propertyName: m.propertyName,
           notify: false,
+        });
+        void notifyUser(m.investorId, {
+          type: input.action === "approve" ? "mortgage_approved" : "mortgage_rejected",
+          category: "mortgages",
+          title: input.action === "approve" ? "Mortgage Approved" : "Mortgage Application Rejected",
+          message,
+          severity: input.action === "approve" ? "success" : "error",
+          link: "/invest/dashboard?tab=mortgages",
+          relatedRef: m.reference,
+          inApp: false,
+          emailDetails: [
+            { label: "Property", value: m.propertyName },
+            { label: "Plan", value: m.planName },
+            { label: "Installment", value: fmtMoney(m.installmentAmount) },
+          ],
         });
       }
 

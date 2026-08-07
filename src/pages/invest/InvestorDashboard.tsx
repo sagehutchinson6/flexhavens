@@ -29,45 +29,70 @@ import MessagesTab from "@/components/invest/dashboard/MessagesTab";
 import TestimonialsTab from "@/components/invest/dashboard/TestimonialsTab";
 import VerificationBadge from "@/components/invest/VerificationBadge";
 
-const tabs = [
-  { id: "overview", label: "Overview", icon: LayoutDashboard },
-  { id: "verification", label: "Verification", icon: ShieldCheck },
-  { id: "purchases", label: "My Property Purchases", icon: Building2 },
-  { id: "documents", label: "Documents", icon: FolderOpen },
-  { id: "portfolio", label: "Portfolio", icon: Briefcase },
-  { id: "invest", label: "Invest", icon: TrendingUp },
-  { id: "profits", label: "Profits", icon: Coins },
-  { id: "calculator", label: "Calculator", icon: Calculator },
-  { id: "liquidations", label: "Liquidation History", icon: CircleDollarSign },
-  { id: "mortgages", label: "My Mortgages", icon: Landmark },
-  { id: "appointments", label: "Appointments", icon: CalendarDays },
-  { id: "messages", label: "Messages", icon: MessageSquare },
-  { id: "testimonials", label: "Testimonials", icon: Star },
-  { id: "deposit", label: "Deposit", icon: ArrowDownToLine },
-  { id: "withdraw", label: "Withdraw", icon: ArrowUpFromLine },
-  { id: "transactions", label: "Transactions", icon: Receipt },
-  { id: "referrals", label: "Referrals", icon: Users },
-  { id: "notifications", label: "Notifications", icon: Bell },
-  { id: "settings", label: "Settings", icon: Settings },
+// Sidebar is organized into logical groups; every existing tab is preserved.
+type DashTab = { id: string; label: string; icon: typeof LayoutDashboard };
+const tabGroups: { group: string; items: DashTab[] }[] = [
+  {
+    group: "Account",
+    items: [
+      { id: "overview", label: "Overview", icon: LayoutDashboard },
+      { id: "verification", label: "Verification", icon: ShieldCheck },
+      { id: "documents", label: "Documents", icon: FolderOpen },
+      { id: "messages", label: "Messages", icon: MessageSquare },
+      { id: "notifications", label: "Notifications", icon: Bell },
+      { id: "testimonials", label: "Testimonials", icon: Star },
+      { id: "settings", label: "Settings", icon: Settings },
+    ],
+  },
+  {
+    group: "Investments",
+    items: [
+      { id: "invest", label: "Invest", icon: TrendingUp },
+      { id: "portfolio", label: "Portfolio", icon: Briefcase },
+      { id: "profits", label: "Profits", icon: Coins },
+      { id: "calculator", label: "Calculator", icon: Calculator },
+      { id: "liquidations", label: "Liquidation History", icon: CircleDollarSign },
+      { id: "referrals", label: "Referrals", icon: Users },
+    ],
+  },
+  {
+    group: "Property",
+    items: [
+      { id: "purchases", label: "My Property Purchases", icon: Building2 },
+      { id: "mortgages", label: "My Mortgages", icon: Landmark },
+      { id: "appointments", label: "Appointments", icon: CalendarDays },
+    ],
+  },
+  {
+    group: "Finance",
+    items: [
+      { id: "deposit", label: "Wallet", icon: ArrowDownToLine },
+      { id: "transactions", label: "Wallet Activity", icon: Receipt },
+      { id: "withdraw", label: "Withdraw", icon: ArrowUpFromLine },
+    ],
+  },
 ];
+
+const tabs: DashTab[] = tabGroups.flatMap((g) => g.items);
 
 export default function InvestorDashboard() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { investor, isLoading, isAuthenticated, isAdmin, logout, refetch } = useInvestor();
   const [activeTab, setActiveTab] = useState(searchParams.get("tab") || "overview");
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  // React to ?tab= changes from the navbar dropdown while already on the dashboard
+  // Keep the visible tab in sync with the URL — this is what makes the
+  // browser/device Back button move between tabs correctly.
   useEffect(() => {
-    const t = searchParams.get("tab");
-    if (t && t !== activeTab) setActiveTab(t);
+    const t = searchParams.get("tab") || "overview";
+    if (t !== activeTab) setActiveTab(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
-      navigate("/invest/login?next=/invest/dashboard");
+      navigate("/invest/login?next=/invest/dashboard", { replace: true });
     }
   }, [isLoading, isAuthenticated, navigate]);
 
@@ -102,9 +127,14 @@ export default function InvestorDashboard() {
   const currentTab = tabs.find((t) => t.id === activeTab) ?? tabs[0];
 
   const handleSetTab = (tab: string) => {
-    setActiveTab(tab);
     setSidebarOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
+    if (tab === activeTab) return; // no duplicate history entries
+    setActiveTab(tab);
+    // Push a real history entry so Back returns to the previous tab
+    const next = new URLSearchParams(searchParams);
+    next.set("tab", tab);
+    setSearchParams(next);
   };
 
   return (
@@ -195,38 +225,47 @@ export default function InvestorDashboard() {
             sidebarOpen ? "translate-x-0" : "-translate-x-full"
           } h-[calc(100vh-4rem)] overflow-y-auto`}
         >
-          <nav className="p-4 space-y-1">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => handleSetTab(tab.id)}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition ${
-                  activeTab === tab.id
-                    ? "bg-gradient-to-r from-[#1e3a5f] to-[#2d5a87] text-white shadow-md"
-                    : "text-gray-600 hover:bg-[#faf8f5] hover:text-[#1e3a5f]"
-                }`}
-              >
-                <tab.icon className="w-5 h-5" />
-                {tab.label}
-                {tab.id === "notifications" && unread > 0 && (
-                  <span
-                    className={`ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                      activeTab === tab.id ? "bg-white/20 text-white" : "bg-[#c8956c] text-white"
-                    }`}
-                  >
-                    {unread}
-                  </span>
-                )}
-                {tab.id === "messages" && msgUnread > 0 && (
-                  <span
-                    className={`ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                      activeTab === tab.id ? "bg-white/20 text-white" : "bg-[#c8956c] text-white"
-                    }`}
-                  >
-                    {msgUnread}
-                  </span>
-                )}
-              </button>
+          <nav className="p-4 space-y-4">
+            {tabGroups.map((group) => (
+              <div key={group.group}>
+                <p className="px-4 pb-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-gray-400">
+                  {group.group}
+                </p>
+                <div className="space-y-1">
+                  {group.items.map((tab) => (
+                    <button
+                      key={tab.id}
+                      onClick={() => handleSetTab(tab.id)}
+                      className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition ${
+                        activeTab === tab.id
+                          ? "bg-gradient-to-r from-[#1e3a5f] to-[#2d5a87] text-white shadow-md"
+                          : "text-gray-600 hover:bg-[#faf8f5] hover:text-[#1e3a5f]"
+                      }`}
+                    >
+                      <tab.icon className="w-5 h-5" />
+                      {tab.label}
+                      {tab.id === "notifications" && unread > 0 && (
+                        <span
+                          className={`ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                            activeTab === tab.id ? "bg-white/20 text-white" : "bg-[#c8956c] text-white"
+                          }`}
+                        >
+                          {unread}
+                        </span>
+                      )}
+                      {tab.id === "messages" && msgUnread > 0 && (
+                        <span
+                          className={`ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                            activeTab === tab.id ? "bg-white/20 text-white" : "bg-[#c8956c] text-white"
+                          }`}
+                        >
+                          {msgUnread}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
             ))}
           </nav>
 
@@ -309,7 +348,13 @@ export default function InvestorDashboard() {
                 {activeTab === "appointments" && <AppointmentsTab />}
                 {activeTab === "messages" && <MessagesTab />}
                 {activeTab === "testimonials" && <TestimonialsTab />}
-                {activeTab === "deposit" && <DepositTab onDeposited={refetchAll} />}
+                {activeTab === "deposit" && (
+                  <DepositTab
+                    onDeposited={refetchAll}
+                    stats={dashboardQuery.data?.stats}
+                    setTab={handleSetTab}
+                  />
+                )}
                 {activeTab === "withdraw" && (
                   <WithdrawTab
                     walletBalance={dashboardQuery.data?.stats?.walletBalance ?? 0}

@@ -115,7 +115,7 @@ export default function PortfolioTab({
                       <td className="py-4 pr-4 text-green-600 font-semibold">
                         +{formatCurrency(inv.computedEstimatedEarnings)}
                         <span className="text-xs text-gray-400 block">
-                          Month {inv.profitsPaid ?? 0} of {inv.durationMonths}
+                          Month {inv.profitsPaid ?? 0} of {inv.payoutCount ?? inv.durationMonths}
                         </span>
                       </td>
                       <td className="py-4 pr-4">
@@ -126,7 +126,10 @@ export default function PortfolioTab({
                         </span>
                         <span className="text-xs text-gray-400 block">target {inv.targetReturn}%</span>
                       </td>
-                      <td className="py-4 pr-4 text-gray-600">{inv.durationMonths} mo</td>
+                      <td className="py-4 pr-4 text-gray-600">
+                        {inv.durationDaysEffective ?? inv.durationMonths * 30} days
+                        {inv.durationDays != null && <span className="text-xs text-gray-400 block">flexible</span>}
+                      </td>
                       <td className="py-4 pr-4 text-gray-600">
                         {inv.status === "active" && inv.nextProfitAt
                           ? formatDate(inv.nextProfitAt)
@@ -164,7 +167,7 @@ export default function PortfolioTab({
                     <div>
                       <p className="font-bold text-[#1e3a5f]">{inv.projectName}</p>
                       <p className="text-xs text-gray-500">
-                        {inv.planName} Plan · {inv.durationMonths} months · started {formatDate(inv.startDate)}
+                        {inv.planName} Plan · {inv.durationDaysEffective ?? inv.durationMonths * 30} days · started {formatDate(inv.startDate)}
                       </p>
                     </div>
                     <StatusBadge status={inv.status} />

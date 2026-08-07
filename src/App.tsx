@@ -18,7 +18,7 @@ import InvestorRegister from './pages/invest/InvestorRegister'
 import ForgotPassword from './pages/invest/ForgotPassword'
 import ResetPassword from './pages/invest/ResetPassword'
 import VerifyEmail from './pages/invest/VerifyEmail'
-import ResendVerification from './pages/invest/ResendVerification'
+import VerifyEmailChange from './pages/invest/VerifyEmailChange'
 import InvestorDashboard from './pages/invest/InvestorDashboard'
 import UnifiedAdminDashboard from './pages/UnifiedAdminDashboard'
 import AdminVerifyEmail from './pages/AdminVerifyEmail'
@@ -51,7 +51,7 @@ export default function App() {
           <Route path="/invest/forgot-password" element={<ForgotPassword />} />
           <Route path="/invest/reset-password" element={<ResetPassword />} />
           <Route path="/invest/verify-email" element={<VerifyEmail />} />
-          <Route path="/invest/resend-verification" element={<ResendVerification />} />
+          <Route path="/invest/verify-email-change" element={<VerifyEmailChange />} />
           <Route path="/invest/dashboard" element={<InvestorDashboard />} />
           <Route path="/invest/admin" element={<Navigate to="/admin/dashboard?section=overview" replace />} />
         </Routes>

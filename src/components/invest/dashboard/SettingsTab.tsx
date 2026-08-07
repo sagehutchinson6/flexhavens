@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router";
 import {
   User, Lock, ShieldCheck, Download, MailCheck, MailWarning, FileText, Trash2, Camera, Check,
+  MailPlus, Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +13,7 @@ import { useInvestor, formatCurrency, formatDate } from "@/hooks/use-investor";
 import { SectionCard, StatusBadge } from "./shared";
 import { VerificationBadgeStrip } from "@/components/invest/VerificationBadge";
 import DeleteAccountDialog from "./DeleteAccountDialog";
+import WithdrawalAccountsCard from "./WithdrawalAccountsCard";
 import InvestorAvatar from "@/components/invest/InvestorAvatar";
 import { CountrySelect } from "@/components/GeoSelects";
 
@@ -24,6 +26,7 @@ export default function SettingsTab({ investor }: { investor: any }) {
     country: investor?.country ?? "",
   });
   const [passwords, setPasswords] = useState({ current: "", next: "", confirm: "" });
+  const [emailChange, setEmailChange] = useState({ newEmail: "", password: "" });
   const [showDelete, setShowDelete] = useState(false);
   // Profile photo: null = no unsaved change · data URL = preview of new photo
   const [photoPending, setPhotoPending] = useState<string | null>(null);
@@ -83,6 +86,20 @@ export default function SettingsTab({ investor }: { investor: any }) {
   const submitKyc = trpc.investorAuth.submitKyc.useMutation({
     onSuccess: () => {
       toast.success("Verification submitted for review!");
+      refetch();
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const requestEmailChange = trpc.investorAuth.requestEmailChange.useMutation({
+    onSuccess: (data, vars) => {
+      if (data.devToken) {
+        toast.info("Email service is not configured here — opening verification directly.", { duration: 5000 });
+        navigate(`/invest/verify-email-change?token=${data.devToken}`);
+      } else {
+        toast.success(`Verification link sent to ${vars.newEmail}. Your current email stays active until you confirm it.`, { duration: 6000 });
+      }
+      setEmailChange({ newEmail: "", password: "" });
       refetch();
     },
     onError: (err) => toast.error(err.message),
@@ -353,6 +370,70 @@ export default function SettingsTab({ investor }: { investor: any }) {
           </Button>
         </div>
       </SectionCard>
+
+      {/* Email Change */}
+      <SectionCard
+        title="Change Email Address"
+        subtitle="A verification link is sent to the new address — your current email stays active until it's verified"
+      >
+        <div className="space-y-4">
+          {investor?.pendingEmail && (
+            <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+              <MailWarning className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+              <p className="text-sm text-amber-800">
+                Verification pending for <span className="font-semibold">{investor.pendingEmail}</span> —
+                check that inbox and click the verification link to complete the change. Requesting a new
+                change below cancels the previous link.
+              </p>
+            </div>
+          )}
+          <div>
+            <Label htmlFor="s-newemail">New Email Address</Label>
+            <Input
+              id="s-newemail"
+              type="email"
+              value={emailChange.newEmail}
+              onChange={(e) => setEmailChange((p) => ({ ...p, newEmail: e.target.value }))}
+              placeholder="you@example.com"
+              className="mt-1.5"
+              autoComplete="email"
+            />
+          </div>
+          <div>
+            <Label htmlFor="s-emailpw">Confirm with Password</Label>
+            <Input
+              id="s-emailpw"
+              type="password"
+              value={emailChange.password}
+              onChange={(e) => setEmailChange((p) => ({ ...p, password: e.target.value }))}
+              className="mt-1.5"
+              autoComplete="current-password"
+            />
+          </div>
+          <Button
+            onClick={() => {
+              const email = emailChange.newEmail.trim();
+              if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+                toast.error("Enter a valid email address");
+                return;
+              }
+              requestEmailChange.mutate({ newEmail: email, password: emailChange.password });
+            }}
+            disabled={requestEmailChange.isPending || !emailChange.newEmail || !emailChange.password}
+            className="bg-[#1e3a5f]"
+          >
+            {requestEmailChange.isPending ? (
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <MailPlus className="w-4 h-4 mr-2" />
+            )}
+            {requestEmailChange.isPending ? "Sending..." : "Send Verification Link"}
+          </Button>
+        </div>
+      </SectionCard>
+
+      {/* Saved withdrawal accounts */}
+      <WithdrawalAccountsCard />
 
       {/* KYC */}
       <SectionCard

@@ -6,6 +6,7 @@ import { getDb } from "./queries/connection";
 import { adminUsers, conversations, investorNotifications, investors, messages, type Conversation } from "@db/schema";
 import { MESSAGE_CATEGORIES, messageCategoryLabel } from "@contracts/messaging";
 import { convRefFor, unreadFor, validateAttachment } from "./lib/messaging";
+import { notifyUser } from "./lib/notify";
 import { logAudit, notifyAdmin } from "./lib/activity";
 
 const supportQuery = () => adminPermQuery("support");
@@ -20,7 +21,15 @@ function canAccess(conv: Conversation, ctx: { admin: { id: number; role: string 
 
 async function notifyInvestor(investorId: number, title: string, message: string) {
   try {
-    await getDb().insert(investorNotifications).values({ investorId, title, message, type: "info" });
+    await getDb().insert(investorNotifications).values({ investorId, title, message, type: "info", category: "messages", link: "/invest/dashboard?tab=messages" });
+    void notifyUser(investorId, {
+      type: "support_update",
+      category: "messages",
+      title,
+      message,
+      link: "/invest/dashboard?tab=messages",
+      inApp: false,
+    });
   } catch (err) {
     console.error("investor message notification failed:", err);
   }
