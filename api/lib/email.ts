@@ -48,27 +48,21 @@ export function appBaseUrl(reqHeaders?: Headers): string {
   return "http://localhost:5173";
 }
 
-// ── SMTP transport ──────────────────────────────────────────────
-let transporterPromise: Promise<Transporter | null> | null = null;
+// ── Resend email transport ──────────────────────────────────────
+import { Resend } from "resend";
 
-function getTransporter(): Promise<Transporter | null> {
-  if (!transporterPromise) {
-    transporterPromise = (async () => {
-      const host = process.env.SMTP_HOST;
-      if (!host) return null;
-      const port = Number(process.env.SMTP_PORT ?? 587);
-      const user = process.env.SMTP_USER;
-      const pass = process.env.SMTP_PASS;
-      const nodemailer = (await import("nodemailer")).default;
-      return nodemailer.createTransport({
-        host,
-        port,
-        secure: port === 465,
-        auth: user ? { user, pass } : undefined,
-      });
-    })();
+let resendClient: Resend | null = null;
+
+function getResendClient(): Resend | null {
+  const apiKey = process.env.RESEND_API_KEY;
+
+  if (!apiKey) return null;
+
+  if (!resendClient) {
+    resendClient = new Resend(apiKey);
   }
-  return transporterPromise;
+
+  return resendClient;
 }
 
 export async function sendEmail(opts: {
@@ -78,20 +72,45 @@ export async function sendEmail(opts: {
   text: string;
 }): Promise<{ sent: boolean; reason?: string }> {
   try {
-    const transporter = await getTransporter();
-    if (!transporter) return { sent: false, reason: "smtp-not-configured" };
-    const from = process.env.SMTP_FROM ?? process.env.SMTP_USER ?? Company.email;
-    await transporter.sendMail({
-      from: `"${Company.name}" <${from}>`,
+    const resend = getResendClient();
+
+    if (!resend) {
+      return {
+        sent: false,
+        reason: "resend-not-configured",
+      };
+    }
+
+    const from =
+      process.env.RESEND_FROM ??
+      process.env.EMAIL_FROM ??
+      "FlexHavens Invest <info@eaventra.com>";
+
+    const result = await resend.emails.send({
+      from,
       to: opts.to,
       subject: opts.subject,
       html: opts.html,
       text: opts.text,
     });
+
+    if (result.error) {
+      console.error("Resend email failed:", result.error);
+
+      return {
+        sent: false,
+        reason: result.error.message,
+      };
+    }
+
     return { sent: true };
   } catch (err) {
     console.error("email send failed:", err);
-    return { sent: false, reason: err instanceof Error ? err.message : "send-failed" };
+
+    return {
+      sent: false,
+      reason: err instanceof Error ? err.message : "send-failed",
+    };
   }
 }
 
