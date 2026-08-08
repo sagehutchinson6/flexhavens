@@ -24,7 +24,7 @@ export default function WhatsAppChat() {
 
     setTimeout(() => {
       const lower = text.toLowerCase();
-      let reply = "Thank you for your message! Our team will get back to you shortly. For immediate assistance, please call +1 (506) 497-8043 or email flexhavens@outlook.com";
+      let reply = "Thank you for your message! Our team will get back to you shortly. For immediate assistance, please call +23408054825441 or email flexhavens@outlook.com";
       
       for (const [key, value] of Object.entries(responses)) {
         if (lower.includes(key)) {

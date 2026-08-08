@@ -148,7 +148,7 @@ export default function ContactSection() {
                   </div>
                   <div>
                     <div className="font-semibold text-[#1e3a5f]">Phone / WhatsApp</div>
-                    <p className="text-gray-600">+1 (506) 497-8043</p>
+                    <p className="text-gray-600">+23408054825441</p>
                     <p className="text-xs text-gray-500">Mon-Sun, 8AM-9PM WAT</p>
                   </div>
                 </div>
@@ -168,7 +168,7 @@ export default function ContactSection() {
 
             {/* WhatsApp CTA */}
             <a
-              href="https://wa.me/15064978043"
+              href="https://wa.me/23408054825441"
               target="_blank"
               rel="noopener noreferrer"
               className="block bg-green-50 border-2 border-green-200 p-6 rounded-xl hover:bg-green-100 transition"

@@ -33,7 +33,7 @@ function SocialLinks({ bgColor }: { bgColor: string }) {
       style={{ background: `linear-gradient(to left, ${bgColor}, ${bgColor}, transparent)` }}
     >
       <a
-        href="https://wa.me/15064978043"
+        href="https://wa.me/23408054825441"
         target="_blank"
         rel="noopener noreferrer"
         className="hover:scale-110 transition-transform"
