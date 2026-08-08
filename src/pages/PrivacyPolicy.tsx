@@ -67,7 +67,7 @@ export default function PrivacyPolicy() {
 
             <h2 className="text-xl font-bold text-[#1e3a5f] mb-3">7. Contact Us</h2>
             <p className="mb-4">If you have any questions about this Privacy Policy, please contact us at:</p>
-            <p className="mb-4">Email: flexhavens@outlook.com<br />Address: Abuja, FCT, Nigeria</p>
+            <p className="mb-4">Email: info@eaventra.com<br />Address: Abuja, FCT, Nigeria</p>
           </div>
         </div>
       </main>

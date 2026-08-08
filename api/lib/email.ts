@@ -18,7 +18,7 @@ const Brand = {
 export const Company = {
   name: "FlexHavens Invest",
   legalName: "FlexHavens Real Estate Development Ltd.",
-  email: "flexhavens@outlook.com",
+  email: "info@eaventra.com",
   phone: "+1 (506) 497-8043",
   hours: "Mon–Sun, 8AM–9PM WAT",
   addressLines: ["FlexHavens Real Estate Development Ltd.", "Abuja, FCT, Nigeria"],

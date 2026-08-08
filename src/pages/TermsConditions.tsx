@@ -46,7 +46,7 @@ export default function TermsConditions() {
             <p className="mb-4">These Terms shall be governed by and construed in accordance with the laws of the Federal Republic of Nigeria, without regard to its conflict of law provisions.</p>
 
             <h2 className="text-xl font-bold text-[#1e3a5f] mb-3">9. Contact Information</h2>
-            <p className="mb-4">For questions about these Terms, please contact us at:<br />Email: flexhavens@outlook.com<br />Address: Abuja, FCT, Nigeria</p>
+            <p className="mb-4">For questions about these Terms, please contact us at:<br />Email: info@eaventra.com<br />Address: Abuja, FCT, Nigeria</p>
           </div>
         </div>
       </main>

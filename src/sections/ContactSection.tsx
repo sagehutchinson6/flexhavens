@@ -139,7 +139,7 @@ export default function ContactSection() {
                   </div>
                   <div>
                     <div className="font-semibold text-[#1e3a5f]">Email</div>
-                    <p className="text-gray-600">flexhavens@outlook.com</p>
+                    <p className="text-gray-600">info@eaventra.com</p>
                   </div>
                 </div>
                 <div className="flex items-start gap-4">
