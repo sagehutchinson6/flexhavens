@@ -437,7 +437,7 @@ export const adminRouter = createRouter({
   // price change applies to new purchases only.
   properties: adminPermQuery("catalog").query(async () => {
     const db = getDb();
-    return db.select().from(products).orderBy(desc(products.createdAt));
+    return db.select().from(products).orderBy(desc(products.id));
   }),
 
   updatePropertyPrice: adminPermQuery("catalog")
@@ -595,3 +595,4 @@ export const adminRouter = createRouter({
       return { success: true };
     }),
 });
+
