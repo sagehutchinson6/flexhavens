@@ -888,9 +888,13 @@ export default function AdminDashboard({ embedded = false }: { embedded?: boolea
           </Card>
         )}
 
-        {activeTab === "media" && canCatalog && <AdminPropertyMedia />}
+      {activeTab === "media" && canCatalog && (
+  <AdminPropertyMedia />
+)}
 
-        {activeTab === "team" && canContent && <AdminTeam />}
+        {activeTab === "team" && canContent && (
+  <AdminTeam />
+)}
       </main>
     </div>
   );
